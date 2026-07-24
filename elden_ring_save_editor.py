@@ -58,6 +58,10 @@ MAX_LEVEL = 713
 # PGD always sits after the fixed 0x1400-entry gaitem map (>= ~0xA000 bytes),
 # so anything before this floor is inside the item map, never PlayerGameData.
 PGD_SCAN_FLOOR = 0x8000
+# 8 core stats in save order, at PGD+0x34..+0x50 (4 bytes each).
+STAT_NAMES = ("vigor", "mind", "endurance", "strength",
+              "dexterity", "intelligence", "faith", "arcane")
+WRETCH_STATS = 10   # every stat at 10 -> level 1 (the blank-slate class base)
 
 # EquipInventoryData (held inventory) geometry.
 INV_COMMON_CAP = 2688        # 0xA80 held common items
@@ -296,11 +300,6 @@ def find_held_inventory(slot, start_hint=0):
         h0, q0, _ = _record(slot, p + 4, 0)
         if not _handle_valid(h0, q0):
             continue
-        # The record just past the used count should be empty (array not packed).
-        if common_count < INV_COMMON_CAP:
-            he, _, _ = _record(slot, p + 4, common_count)
-            if he != 0:
-                continue
         key_count = u32(slot, p + key_count_rel)
         if key_count > INV_KEY_CAP:
             continue
@@ -308,11 +307,27 @@ def find_held_inventory(slot, start_hint=0):
         next_acq = u32(slot, p + next_acq_rel)
         if next_equip >= 0x100000 or next_acq >= 0x100000:
             continue
+        # Decisive check: the real held inventory has exactly common_count
+        # non-zero common records and key_count non-zero key records. A stray
+        # in-range u32 a few records into the real array is followed by the
+        # SAME item bytes, so its declared count no longer matches the non-zero
+        # record total - that false match is skipped here.
+        nz_common = sum(1 for k in range(INV_COMMON_CAP)
+                        if u32(slot, p + 4 + k * ITEM_RECORD_LEN) != 0)
+        if nz_common != common_count:
+            continue
+        key_arr = p + key_count_rel + 4
+        nz_key = sum(1 for k in range(INV_KEY_CAP)
+                     if u32(slot, key_arr + k * ITEM_RECORD_LEN) != 0)
+        if nz_key != key_count:
+            continue
         return {
             "start": p,
             "common_off": p + 4,
             "common_count": common_count,
             "key_count_off": p + key_count_rel,
+            "key_off": key_arr,
+            "key_count": key_count,
             "next_equip_off": p + next_equip_rel,
             "next_acq_off": p + next_acq_rel,
         }
@@ -331,14 +346,29 @@ def resolve_inventory(buf, slot):
     return data, inv
 
 
+def _iter_records(data, arr_off, cap):
+    """Yield (index, handle, qty, acq_index) for every non-zero record. The
+    array is SPARSE - items can sit past the count-th slot with gaps between -
+    so walk the whole capacity, not just the first `count` slots."""
+    for k in range(cap):
+        handle, qty, idx = _record(data, arr_off, k)
+        if handle != 0:
+            yield k, handle, qty, idx
+
+
+def _first_free(data, arr_off, cap):
+    """Index of the first empty (zero-handle) slot, or None if the array is full."""
+    for k in range(cap):
+        if u32(data, arr_off + k * ITEM_RECORD_LEN) == 0:
+            return k
+    return None
+
+
 def iter_items(data, inv):
-    for i in range(inv["common_count"]):
-        handle, qty, idx = _record(data, inv["common_off"], i)
-        if handle == 0:
-            continue
+    for k, handle, qty, idx in _iter_records(data, inv["common_off"], INV_COMMON_CAP):
         cat = (handle >> 28) & 0xF
         item_id = handle & ITEM_ID_MASK
-        yield i, handle, qty, idx, cat, item_id
+        yield k, handle, qty, idx, cat, item_id
 
 
 def describe_item(cat, item_id):
@@ -452,6 +482,49 @@ def cmd_set_rune(args):
     commit(args.file, buf, [args.slot], args.yes)
 
 
+def cmd_set_stats(args):
+    """Respec: write the 8 core stats directly and set level = sum - 79 so the
+    save invariant holds. Class is irrelevant (raw values are written). HP/FP/
+    stamina are recomputed by the game on load - rest at a Site of Grace to
+    refresh the bars."""
+    buf = load_save(args.file)
+    require_valid_slot(buf, args.slot)
+    off = slot_data_off(args.slot)
+    data = get_slot(buf, args.slot)
+    pgd = find_pgd(data)
+    if pgd is None:
+        raise SystemExit(f"Could not locate character data in slot {args.slot}.")
+
+    cur = [u32(data, pgd + PGD_STATS_OFF + i * 4) for i in range(8)]
+    if args.wretch:
+        new = [WRETCH_STATS] * 8
+    else:
+        new = list(cur)
+        for i, name in enumerate(STAT_NAMES):
+            v = getattr(args, name)
+            if v is not None:
+                new[i] = v
+        if new == cur:
+            raise SystemExit("No stats given. Use --wretch or --vigor/--mind/... values.")
+
+    for i, v in enumerate(new):
+        if v < 1 or v > 99:
+            raise SystemExit(f"{STAT_NAMES[i]} must be 1..99 (got {v}).")
+    level = sum(new) - LEVEL_STAT_BIAS
+    if level < 1 or level > MAX_LEVEL:
+        raise SystemExit(f"Stats sum to level {level}, out of range 1..{MAX_LEVEL}.")
+
+    for i, v in enumerate(new):
+        put_u32(buf, off + pgd + PGD_STATS_OFF + i * 4, v)
+    old_level = u32(data, pgd + PGD_LEVEL_OFF)
+    put_u32(buf, off + pgd + PGD_LEVEL_OFF, level)
+
+    print(f"slot {args.slot}: level {old_level} -> {level}")
+    for i, name in enumerate(STAT_NAMES):
+        print(f"  {name:12} {cur[i]:>3} -> {new[i]:>3}")
+    commit(args.file, buf, [args.slot], args.yes)
+
+
 def _match_item_id(args):
     if args.item_id is not None:
         return args.item_id
@@ -528,32 +601,47 @@ def cmd_add_item(args):
     data, inv = resolve_inventory(buf, args.slot)
     handle = mask | item_id
 
-    # Merge into an existing stack if this item is already held.
-    for i, h, qty, _, c, iid in iter_items(data, inv):
+    # Key items (medallions, maps, cookbooks, crystal tears...) live in the
+    # separate key-items array; everything else (consumables, materials,
+    # talismans...) in the common array. The two acquisition counters at the
+    # end of the struct are shared by both.
+    if args.key:
+        arr_off, count = inv["key_off"], inv["key_count"]
+        count_off, cap = inv["key_count_off"], INV_KEY_CAP
+    else:
+        arr_off, count = inv["common_off"], inv["common_count"]
+        count_off, cap = inv["start"], INV_COMMON_CAP
+
+    # Merge into an existing stack if already held (scan the whole array; it
+    # can be sparse, with items past the count-th slot).
+    for k, h, qty, _ in _iter_records(data, arr_off, cap):
         if h == handle:
             new_qty = min(qty + args.qty, MAX_ITEM_QTY)
-            put_u32(buf, off + inv["common_off"] + i * ITEM_RECORD_LEN + 4, new_qty)
+            put_u32(buf, off + arr_off + k * ITEM_RECORD_LEN + 4, new_qty)
             print(f"slot {args.slot}: {describe_item(cat, item_id)} already held, "
                   f"qty {qty} -> {new_qty}")
             commit(args.file, buf, [args.slot], args.yes)
             return
 
-    count = inv["common_count"]
-    if count >= INV_COMMON_CAP:
-        raise SystemExit("Held common inventory is full.")
+    # Write into the first FREE slot (NOT index==count: the array has gaps, so
+    # count is not the next free index). Then bump the count field by one.
+    free = _first_free(data, arr_off, cap)
+    if free is None:
+        raise SystemExit("That inventory array is full.")
     next_acq = u32(data, inv["next_acq_off"])
     next_equip = u32(data, inv["next_equip_off"])
 
-    rec_off = off + inv["common_off"] + count * ITEM_RECORD_LEN
+    rec_off = off + arr_off + free * ITEM_RECORD_LEN
     put_u32(buf, rec_off + 0, handle)
     put_u32(buf, rec_off + 4, args.qty)
     put_u32(buf, rec_off + 8, next_acq)
-    put_u32(buf, off + inv["start"], count + 1)          # common_item_count
+    put_u32(buf, off + count_off, count + 1)             # common_ or key_item_count
     put_u32(buf, off + inv["next_equip_off"], next_equip + 1)
     put_u32(buf, off + inv["next_acq_off"], next_acq + 1)
 
+    where = "key" if args.key else "common"
     print(f"slot {args.slot}: added {describe_item(cat, item_id)} x{args.qty} "
-          f"(item_id {item_id}, handle {handle:#010x})")
+          f"(item_id {item_id}, handle {handle:#010x}, {where} array slot {free})")
     commit(args.file, buf, [args.slot], args.yes)
 
 
@@ -597,6 +685,13 @@ def build_parser():
     sp.add_argument("value", type=lambda x: int(x, 0))
     sp.set_defaults(func=cmd_set_rune)
 
+    sp = sub.add_parser("set-stats", help="respec: set stats directly (level auto = sum-79)")
+    sp.add_argument("--slot", type=int, default=0)
+    sp.add_argument("--wretch", action="store_true", help="reset all 8 stats to 10 (level 1)")
+    for _name in STAT_NAMES:
+        sp.add_argument(f"--{_name}", type=int, help=f"{_name} (1-99)")
+    sp.set_defaults(func=cmd_set_stats)
+
     sp = sub.add_parser("set-qty", help="set quantity of an item you already own")
     sp.add_argument("--slot", type=int, default=0)
     sp.add_argument("--index", type=int, help="record index from list-items")
@@ -610,6 +705,7 @@ def build_parser():
     sp.add_argument("--item-id", type=lambda x: int(x, 0), help="base param id (e.g. 190)")
     sp.add_argument("--name", help="known goods/talisman name (e.g. 'Rune Arc')")
     sp.add_argument("--talisman", action="store_true", help="treat item as a talisman (accessory)")
+    sp.add_argument("--key", action="store_true", help="add into the key-items array (medallions, maps, cookbooks, crystal tears...)")
     sp.add_argument("--qty", type=int, required=True)
     sp.set_defaults(func=cmd_add_item)
 
