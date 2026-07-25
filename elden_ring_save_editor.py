@@ -79,6 +79,22 @@ GOODS_HANDLE_MASK = 0xB0000000       # goods handle    = mask | item_id
 TALISMAN_HANDLE_MASK = 0xA0000000    # talisman handle = mask | item_id
 ITEM_ID_MASK = 0x0FFFFFFF
 
+# Ashes of War are handle-referenced: the inventory record only stores an
+# allocated handle, and the gem id lives in a separate gaitem map entry at the
+# start of the slot. Layout verified against a real save: 8-byte entries
+# {gaitem_handle u32, item_id u32}, empty ones written as {0, 0xFFFFFFFF},
+# item_id carrying a 0x80000000 flag on top of the EquipParamGem id.
+GAITEM_ARRAY_START = 0x20
+GAITEM_ENTRY_LEN = 8
+GAITEM_EMPTY_ITEM_ID = 0xFFFFFFFF
+AOW_HANDLE_BASE = 0xC0800000         # handle = base | allocation counter
+AOW_ITEM_ID_FLAG = 0x80000000
+# The game allocates handle counters sequentially and stores no counter we can
+# safely bump, so new handles start far above anything a playthrough reaches
+# (observed max on a level-461 save: ~0xD23). This keeps the game's own
+# allocations from ever colliding with ours.
+AOW_HANDLE_COUNTER_BASE = 0x10000
+
 # Item name tables (param id -> display name). Seeded with a few verified goods;
 # the full set (2000+ goods, 155 talismans) is merged from elden_ring_items.json
 # if that file sits next to this script. Goods and talismans both use a
@@ -91,31 +107,44 @@ KNOWN_GOODS = {
     8000: "Stonesword Key",
 }
 KNOWN_TALISMANS = {}
+KNOWN_AOW = {}
 KNOWN_GOODS_BY_NAME = {v.lower(): k for k, v in KNOWN_GOODS.items()}
 KNOWN_TALISMANS_BY_NAME = {}
+KNOWN_AOW_BY_NAME = {}
 
 
 def _load_item_db():
-    """Merge the full goods + talisman name tables from elden_ring_items.json
-    (shipped next to this script) if present. Falls back to the built-ins."""
+    """Merge the full name tables shipped next to this script. Both files are
+    read: the base one carries goods + talismans, the full reference adds the
+    Ash of War (EquipParamGem) table. Falls back to the built-ins."""
     import json
     here = os.path.dirname(os.path.abspath(__file__))
-    for cand in (os.path.join(here, "elden_ring_items.json"),
-                 os.path.join(os.getcwd(), "elden_ring_items.json")):
-        if not os.path.isfile(cand):
-            continue
-        try:
-            with open(cand, encoding="utf-8") as fh:
-                data = json.load(fh)
-        except (ValueError, OSError):
-            return
-        for sid, name in data.get("goods", {}).items():
-            KNOWN_GOODS[int(sid)] = name
-            KNOWN_GOODS_BY_NAME[name.lower()] = int(sid)
-        for sid, name in data.get("talismans", {}).items():
-            KNOWN_TALISMANS[int(sid)] = name
-            KNOWN_TALISMANS_BY_NAME[name.lower()] = int(sid)
-        return
+    seen = set()
+    for fname in ("elden_ring_items.json", "elden_ring_items_full_reference.json"):
+        for cand in (os.path.join(here, fname), os.path.join(os.getcwd(), fname)):
+            if not os.path.isfile(cand) or cand in seen:
+                continue
+            seen.add(cand)
+            try:
+                with open(cand, encoding="utf-8") as fh:
+                    data = json.load(fh)
+            except (ValueError, OSError):
+                break
+            for sid, name in data.get("goods", {}).items():
+                KNOWN_GOODS[int(sid)] = name
+                KNOWN_GOODS_BY_NAME[name.lower()] = int(sid)
+            for sid, name in data.get("talismans", {}).items():
+                KNOWN_TALISMANS[int(sid)] = name
+                KNOWN_TALISMANS_BY_NAME[name.lower()] = int(sid)
+            # The gem table lists several ids per skill (per-weapon-class
+            # variants); the save only ever stores the multiple-of-100 base id,
+            # so ignore the rest to keep name lookup unambiguous.
+            for sid, name in data.get("ashes_of_war", {}).items():
+                if int(sid) % 100:
+                    continue
+                KNOWN_AOW[int(sid)] = name
+                KNOWN_AOW_BY_NAME.setdefault(name.lower(), int(sid))
+            break
 
 
 _load_item_db()
@@ -346,6 +375,42 @@ def resolve_inventory(buf, slot):
     return data, inv
 
 
+def iter_gaitem_entries(slot, pgd):
+    """Walk the 8-byte gaitem map that sits between the slot header and
+    PlayerGameData. Yields (offset, handle, item_id)."""
+    off = GAITEM_ARRAY_START
+    while off + GAITEM_ENTRY_LEN <= pgd:
+        handle, item_id = struct.unpack_from("<II", slot, off)
+        yield off, handle, item_id
+        off += GAITEM_ENTRY_LEN
+
+
+def gaitem_map(slot, pgd):
+    """handle -> item_id, for naming handle-referenced inventory records."""
+    return {h: iid for _, h, iid in iter_gaitem_entries(slot, pgd) if h}
+
+
+def find_free_gaitem(slot, pgd):
+    """Offset of the first entry carrying the canonical empty marker
+    {handle 0, item_id -1}. Anything else is live data and must not be reused:
+    an entry with no inventory record is usually an Ash of War already applied
+    to a weapon."""
+    for off, handle, item_id in iter_gaitem_entries(slot, pgd):
+        if handle == 0 and item_id == GAITEM_EMPTY_ITEM_ID:
+            return off
+    return None
+
+
+def used_handles(slot, pgd, inv):
+    """Every handle the save already refers to, from the gaitem map and from
+    both inventory arrays, so a freshly allocated one cannot collide."""
+    taken = {h for _, h, _ in iter_gaitem_entries(slot, pgd) if h}
+    for arr, cap in ((inv["common_off"], INV_COMMON_CAP), (inv["key_off"], INV_KEY_CAP)):
+        for _, handle, _, _ in _iter_records(slot, arr, cap):
+            taken.add(handle)
+    return taken
+
+
 def _iter_records(data, arr_off, cap):
     """Yield (index, handle, qty, acq_index) for every non-zero record. The
     array is SPARSE - items can sit past the count-th slot with gaps between -
@@ -455,13 +520,21 @@ def cmd_list_items(args):
     buf = load_save(args.file)
     require_valid_slot(buf, args.slot)
     data, inv = resolve_inventory(buf, args.slot)
+    # Ashes of War carry no id in the record itself, so resolve them through the
+    # gaitem map to print a real name instead of "handle-referenced".
+    pgd = find_pgd(data)
+    gamap = gaitem_map(data, pgd) if pgd is not None else {}
     print(f"held inventory (used common slots: {inv['common_count']})")
     print(f"{'idx':>4}  {'qty':>4}  {'item_id':>8}  name")
     shown = 0
     for i, handle, qty, _, cat, item_id in iter_items(data, inv):
         if args.goods_only and cat != GAITEM_GOODS:
             continue
-        print(f"{i:>4}  {qty:>4}  {item_id:>8}  {describe_item(cat, item_id)}")
+        label = describe_item(cat, item_id)
+        if cat == GAITEM_AOW and handle in gamap:
+            gem = gamap[handle] & ~AOW_ITEM_ID_FLAG
+            label = KNOWN_AOW.get(gem, f"Ash of War #{gem}")
+        print(f"{i:>4}  {qty:>4}  {item_id:>8}  {label}")
         shown += 1
     print(f"({shown} items listed)")
 
@@ -645,6 +718,70 @@ def cmd_add_item(args):
     commit(args.file, buf, [args.slot], args.yes)
 
 
+def _resolve_aow_target(args):
+    """Pick the EquipParamGem id for add-aow, by id or by name (the 'Ash of War: '
+    prefix is optional)."""
+    if args.gem_id is not None:
+        return args.gem_id
+    if args.name is None:
+        raise SystemExit("Provide --gem-id or --name.")
+    key = args.name.lower()
+    for cand in (key, f"ash of war: {key}"):
+        if cand in KNOWN_AOW_BY_NAME:
+            return KNOWN_AOW_BY_NAME[cand]
+    raise SystemExit(f"Unknown Ash of War '{args.name}'. Use --gem-id instead.")
+
+
+def cmd_add_aow(args):
+    """Add an Ash of War. Unlike goods it needs two writes: a gaitem map entry
+    holding the gem id, plus an inventory record pointing at that entry through
+    a freshly allocated handle."""
+    buf = load_save(args.file)
+    require_valid_slot(buf, args.slot)
+    gem_id = _resolve_aow_target(args)
+    if gem_id & ~ITEM_ID_MASK:
+        raise SystemExit("gem-id must be a base EquipParamGem id.")
+
+    off = slot_data_off(args.slot)
+    data = get_slot(buf, args.slot)
+    pgd = find_pgd(data)
+    if pgd is None:
+        raise SystemExit(f"Could not locate character data in slot {args.slot}.")
+    inv = find_held_inventory(data, start_hint=pgd)
+    if inv is None:
+        raise SystemExit(f"Could not locate the held inventory in slot {args.slot}.")
+
+    ga_off = find_free_gaitem(data, pgd)
+    if ga_off is None:
+        raise SystemExit("No free gaitem map entry left.")
+    free = _first_free(data, inv["common_off"], INV_COMMON_CAP)
+    if free is None:
+        raise SystemExit("The common inventory array is full.")
+
+    taken = used_handles(data, pgd, inv)
+    counter = AOW_HANDLE_COUNTER_BASE
+    while (AOW_HANDLE_BASE | counter) in taken:
+        counter += 1
+    handle = AOW_HANDLE_BASE | counter
+
+    next_acq = u32(data, inv["next_acq_off"])
+    next_equip = u32(data, inv["next_equip_off"])
+
+    struct.pack_into("<II", buf, off + ga_off, handle, AOW_ITEM_ID_FLAG | gem_id)
+    rec_off = off + inv["common_off"] + free * ITEM_RECORD_LEN
+    put_u32(buf, rec_off + 0, handle)
+    put_u32(buf, rec_off + 4, 1)          # one gaitem entry backs exactly one copy
+    put_u32(buf, rec_off + 8, next_acq)
+    put_u32(buf, off + inv["start"], inv["common_count"] + 1)
+    put_u32(buf, off + inv["next_equip_off"], next_equip + 1)
+    put_u32(buf, off + inv["next_acq_off"], next_acq + 1)
+
+    name = KNOWN_AOW.get(gem_id, f"Ash of War #{gem_id}")
+    print(f"slot {args.slot}: added {name} (gem_id {gem_id}, handle {handle:#010x}, "
+          f"gaitem offset {ga_off:#x}, common array slot {free})")
+    commit(args.file, buf, [args.slot], args.yes)
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -708,6 +845,12 @@ def build_parser():
     sp.add_argument("--key", action="store_true", help="add into the key-items array (medallions, maps, cookbooks, crystal tears...)")
     sp.add_argument("--qty", type=int, required=True)
     sp.set_defaults(func=cmd_add_item)
+
+    sp = sub.add_parser("add-aow", help="add an Ash of War (writes a gaitem map entry too)")
+    sp.add_argument("--slot", type=int, default=0)
+    sp.add_argument("--gem-id", type=lambda x: int(x, 0), help="EquipParamGem id (e.g. 30500)")
+    sp.add_argument("--name", help="Ash of War name, prefix optional (e.g. 'Golden Parry')")
+    sp.set_defaults(func=cmd_add_aow)
 
     return p
 
