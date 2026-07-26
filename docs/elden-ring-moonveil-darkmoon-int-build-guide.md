@@ -72,8 +72,10 @@ flowchart LR
 - 1 tia phụ: stamina / máu tùy nhu cầu.
 
 ### Buff
-- **Terra Magica** (tạo vùng +35% damage phép dưới chân - đứng trong đó spam).
-- **Golden Vow** (+dmg/+def).
+- **Terra Magica** (tạo vùng **+22.5%** damage phép dưới chân - đứng trong đó spam). Lưu ý: đã bị nerf từ 35% xuống 22.5% ở patch 1.12, guide cũ trên mạng vẫn ghi 35%.
+- **Golden Vow** (+15% attack / +10% def, 80 giây, cần Fai 25). Không có Faith thì gắn **Ash of War: Golden Vow** lên dao phụ rồi đổi tay.
+
+> 📖 Muốn danh sách **đầy đủ** talisman / giáp / physick / phép buff / spirit ash cho Dark Moon Greatsword, xem [build tổng hợp Dark Moon Greatsword](./elden-ring-dark-moon-greatsword-build-tong-hop.md).
 
 ---
 
