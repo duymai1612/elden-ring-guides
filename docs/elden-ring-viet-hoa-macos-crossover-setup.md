@@ -8,7 +8,8 @@ Bộ cài `.exe` là installer Windows (PyInstaller + PyQt5), không chạy đư
 
 - Bottle CrossOver: `Steam`
 - Thư mục game: `~/Library/Application Support/CrossOver/Bottles/Steam/drive_c/Program Files (x86)/Steam/steamapps/common/ELDEN RING/Game`
-- Khởi chạy: gõ `elden` (hoặc `ervh`) trong terminal, hoặc double-click `elden-ring-viet-hoa.command` ở gốc repo này
+- Khởi chạy: gõ `warp` (hoặc `elden` / `ervh`) trong terminal, mở `Warp.app` trong `~/Applications`, hoặc double-click `warp.command` ở gốc repo này
+- Tên hiển thị trên macOS là **Warp** ở mọi chỗ, xem [Đổi tên hiển thị thành "Warp"](#đổi-tên-hiển-thị-thành-warp)
 
 Mod loader dùng **me3 v0.12.1**, không dùng ModEngine2 đi kèm bộ cài. ModEngine2 đã bị archive từ 19/07/2024 (bản cuối 2.1) và làm game crash mỗi lần thoát dưới Wine (page fault đọc `0x1000f` trong đường teardown, sau khi save đã ghi xong nên vô hại nhưng gây hộp thoại). me3 là bản kế nhiệm chính thức, vẫn được phát triển, và chạy được trên CrossOver.
 
@@ -32,17 +33,59 @@ Vì text nằm ở `mod/`, game gốc vẫn nguyên vẹn: bỏ việt hóa ch�
 
 ## Cách chạy
 
-`.bat` của Windows không dùng được trên macOS nên có script thay thế `elden-ring-viet-hoa.command` ở gốc repo (alias `elden` / `ervh`). Script tự mở Steam trong bottle nếu chưa chạy, chặn mở trùng phiên, rồi gọi:
+`.bat` của Windows không dùng được trên macOS nên có script thay thế `warp.command` ở gốc repo (alias `warp` / `elden` / `ervh`). Script tự mở Steam trong bottle nếu chưa chạy, chặn mở trùng phiên, rồi gọi:
 
 ```sh
 /Applications/CrossOver.app/Contents/SharedSupport/CrossOver/bin/wine \
   --bottle Steam --workdir 'C:\me3' \
-  --cx-app 'C:\me3\bin\me3.exe' launch -p viet-hoa.me3
+  --cx-app 'C:\me3\bin\me3.exe' launch \
+  --exe 'C:\Program Files (x86)\Steam\steamapps\common\ELDEN RING\Game\Warp' \
+  -p viet-hoa.me3
 ```
 
 Lưu ý: `--cx-app` phải nhận đường dẫn Windows (`C:\...`), truyền đường dẫn macOS sẽ lỗi `could not find ... in drive_c`.
 
-Shortcut CrossOver cũ (`eldenring`) chạy `eldenring.exe` trực tiếp nên **không có việt hóa**. Muốn tiếng Việt thì chạy qua script trên.
+`Warp.app` trong `~/Applications` là bản copy của chính script này, đóng gói lại thành app bundle để mở từ Finder/Spotlight/Dock mà không bật cửa sổ Terminal. Sửa `warp.command` xong thì đồng bộ lại:
+
+```sh
+cp ~/game/elden-ring/warp.command ~/Applications/Warp.app/Contents/MacOS/Warp
+```
+
+Shortcut CrossOver (`Warp (vanilla)`, `Warp (shortcut)`) chạy `eldenring.exe` trực tiếp nên **không có việt hóa**. Muốn tiếng Việt thì chạy qua script trên.
+
+## Đổi tên hiển thị thành "Warp"
+
+Tên game xuất hiện ở hai lớp độc lập, đổi lớp này không kéo theo lớp kia:
+
+| Lớp | Nguồn tên | Cách đổi |
+|---|---|---|
+| Finder / Launchpad / Spotlight | `CFBundleName` trong app bundle | Đổi tên `.app` + sửa plist |
+| Dock / Cmd+Tab / Activity Monitor **lúc đang chạy** | basename của file exe Windows | Gọi game qua file tên khác |
+
+Lớp thứ hai là chỗ dễ nhầm. Wine đặt tên process macOS bằng cách hardlink `wineloader` thành `/tmp/winetemp-*/<tên-exe>`, rồi macOS lấy tên file đó làm tên app. Nên tên trên Dock bám theo **tên file exe**, hoàn toàn không liên quan tới app bundle nào đã mở nó.
+
+Cách làm ở đây, không sửa một byte nào của game:
+
+```sh
+G="$HOME/Library/Application Support/CrossOver/Bottles/Steam/drive_c/Program Files (x86)/Steam/steamapps/common/ELDEN RING/Game"
+ln "$G/eldenring.exe" "$G/Warp"     # hardlink, cùng inode, tốn 0 byte
+```
+
+Rồi trỏ me3 vào hardlink đó bằng cờ `--exe` (xem [Cách chạy](#cách-chạy)). File `eldenring.exe` gốc còn nguyên nên chạy thẳng qua Steam vẫn bình thường.
+
+Đặt tên `Warp` không có đuôi `.exe` là cố ý: wine nạp PE theo magic byte chứ không theo đuôi file, và macOS hiện nguyên basename, nên có đuôi thì Dock sẽ hiện `Warp.exe`.
+
+Hardlink giữ nguyên nội dung file nên Arxan (kiểm tra toàn vẹn code, không kiểm tra tên file) và Steam DRM (đọc appid từ `steam_appid.txt`) đều không bị ảnh hưởng.
+
+Các bundle đã đổi tên:
+
+| Trước | Sau |
+|---|---|
+| — | `~/Applications/Warp.app` (mới, bản việt hóa) |
+| `~/Applications/CrossOver/Steam/ELDEN RING.app` | `Warp (vanilla).app` |
+| `~/Applications/CrossOver/eldenring.app` | `Warp (shortcut).app` |
+
+Hai bundle của CrossOver do CrossOver tự sinh ra từ shortcut trong bottle, nên nếu CrossOver đồng bộ lại menu thì tên cũ có thể quay về. Lúc đó đổi tên lại và sửa `CFBundleName` + `CXOriginalMenuName` trong `Contents/Info.plist`, rồi `killall Dock`.
 
 ## Đừng mở lại game ngay sau khi vừa thoát
 
@@ -80,11 +123,14 @@ ER="$B/Program Files (x86)/Steam/steamapps/common/ELDEN RING/Game"
 rm -rf "$ER/mod" "$ER/modengine2" "$ER/modengine2_launcher.exe" \
        "$ER/config_eldenring.toml" "$ER/Elden_Ring_VHTRT.bat" \
        "$ER/Gỡ Việt Hóa.exe" "$ER/steam_appid.txt" "$ER"/modengine_*.log \
-       "$ER/backtrace.txt" "$B/me3"
-rm -f "$HOME/game/elden-ring/elden-ring-viet-hoa.command"
+       "$ER/backtrace.txt" "$B/me3" "$ER/Warp"
+rm -f "$HOME/game/elden-ring/warp.command"
+rm -rf "$HOME/Applications/Warp.app"
 ```
 
-Alias `elden` / `ervh` nằm trong `~/.dotfiles/shell-aliases.sh`, xoá tay nếu cần.
+Alias `warp` / `elden` / `ervh` nằm trong `~/.dotfiles/shell-aliases.sh`, xoá tay nếu cần.
+
+Hai bundle `Warp (vanilla).app` và `Warp (shortcut).app` là của CrossOver, đổi tên về `ELDEN RING.app` / `eldenring.app` nếu muốn trả lại nguyên trạng.
 
 ## Nguồn
 
