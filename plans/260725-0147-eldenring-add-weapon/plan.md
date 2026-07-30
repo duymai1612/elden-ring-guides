@@ -1,7 +1,7 @@
 ---
 title: "Elden Ring save editor: add-weapon capability"
 description: "Add weapons/shields/staves/seals to inventory (gaitem_map + GaItemData registration + slot re-serialization)"
-status: pending
+status: done-alternative
 priority: P2
 created: 2026-07-24
 ---
@@ -30,9 +30,9 @@ Goal: implement `add-weapon`, then add 4 items to slot 1: Erdtree Seal (34070000
 
 | Phase | Name | Status |
 |-------|------|--------|
-| 1 | [Verify format](./phase-01-verify-format.md) | Pending |
-| 2 | [Implement add-weapon](./phase-02-implement-add-weapon.md) | Pending |
-| 3 | [Test and apply](./phase-03-test-and-apply.md) | Pending |
+| 1 | [Verify format](./phase-01-verify-format.md) | Done - gate 1 pass, gate 2 FAIL |
+| 2 | [Implement add-weapon](./phase-02-implement-add-weapon.md) | Bo - bat kha thi, thay bang `replace-weapon` |
+| 3 | [Test and apply](./phase-03-test-and-apply.md) | Done - Coded Sword da vao save |
 
 ## Key risks
 
@@ -45,3 +45,36 @@ Goal: implement `add-weapon`, then add 4 items to slot 1: Erdtree Seal (34070000
 ## Dependencies
 
 None. Single-file tool change + tested batch against the user's save (slot 1).
+
+
+## Kết cục thực tế (2026-07-29)
+
+`add-weapon` **không làm được** trên save đã chơi: thêm entry mới vào gaitem map
+tốn thêm 13 byte, phải đẩy đuôi slot, mà slot 1 còn **0 byte padding** (đo được).
+Chi tiết ở phase 1.
+
+Thay bằng lệnh **`replace-weapon`** đã implement trong `elden_ring_save_editor.py`:
+ghi đè `item_id` của một entry **vốn đã là weapon** -> entry vẫn 21 byte, không
+dịch chuyển gì. Handle, record inventory, mọi counter giữ nguyên. Đổi lại: mất
+món weapon dùng làm "donor".
+
+```
+python3 elden_ring_save_editor.py -f <save> replace-weapon \
+    --slot 1 --source "Marred Wooden Shield" --target "Coded Sword"
+```
+
+Kèm theo, sửa một bug thật trong `iter_gaitem_entries`: nó duyệt map bằng bước cố
+định 8 byte, desync ngay từ entry weapon đầu tiên. Hệ quả: `find_free_gaitem()` có
+thể trả về offset nằm GIỮA phần đuôi 13 byte của một weapon -> `add-aow` ghi đè
+lệch. Giờ duyệt đúng độ dài biến thiên (rỗng 8 / weapon 21 / armor 16).
+
+### Gate đã chạy
+- roundtrip map byte-for-byte: PASS (43291 byte, 5120 entry, `parsed_end == pgd`)
+- `selftest` checksum: PASS
+- regression `add-aow` sau khi sửa walker: PASS
+- test trên 2 bản copy trước khi động vào save thật
+
+### CHƯA verify
+Chưa mở game kiểm tra. Câu hỏi mở: registry `GaItemData` ("distinct acquired
+items") có cần upsert `item_id` mới không - chưa xác định được struct đó nằm đâu
+trong slot. Nếu game hiển thị sai hoặc crash khi mở túi thì restore backup.

@@ -1,7 +1,7 @@
 ---
 phase: 3
 title: "Test and apply"
-status: pending
+status: done
 priority: P1
 effort: "1-2h"
 dependencies: [2]
