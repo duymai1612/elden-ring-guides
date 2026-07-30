@@ -47,6 +47,7 @@ PC_MAGIC = b"BND4"
 PS_MAGIC = bytes([0xCB, 0x01, 0x9C, 0x2C])
 
 # PlayerGameData field offsets (relative to the PGD start inside a slot body).
+PGD_HP_OFF = 0x08            # 3 consecutive u32: hp, max_hp, base_max_hp
 PGD_STATS_OFF = 0x34         # 8 consecutive u32: vigor,mind,end,str,dex,int,fai,arc
 PGD_LEVEL_OFF = 0x60
 PGD_RUNES_OFF = 0x64
@@ -108,9 +109,11 @@ KNOWN_GOODS = {
 }
 KNOWN_TALISMANS = {}
 KNOWN_AOW = {}
+KNOWN_WEAPONS = {}
 KNOWN_GOODS_BY_NAME = {v.lower(): k for k, v in KNOWN_GOODS.items()}
 KNOWN_TALISMANS_BY_NAME = {}
 KNOWN_AOW_BY_NAME = {}
+KNOWN_WEAPONS_BY_NAME = {}
 
 
 def _load_item_db():
@@ -144,6 +147,9 @@ def _load_item_db():
                     continue
                 KNOWN_AOW[int(sid)] = name
                 KNOWN_AOW_BY_NAME.setdefault(name.lower(), int(sid))
+            for sid, name in data.get("weapons", {}).items():
+                KNOWN_WEAPONS[int(sid)] = name
+                KNOWN_WEAPONS_BY_NAME.setdefault(name.lower(), int(sid))
             break
 
 
@@ -291,6 +297,12 @@ def character_summary(buf, slot):
         "name": read_character_name(data, pgd),
         "level": u32(data, pgd + PGD_LEVEL_OFF),
         "runes": u32(data, pgd + PGD_RUNES_OFF),
+        # max_hp is worth surfacing because it is not a value you can set: the game
+        # recomputes it from Vigor on load and writes the result back here. That
+        # makes it a read-only oracle for whether something actually changed the
+        # HP curve - vanilla Elden Ring gives 2100 at Vigor 99 and 522 at Vigor 15.
+        "vigor": u32(data, pgd + PGD_STATS_OFF),
+        "max_hp": u32(data, pgd + PGD_HP_OFF + 4),
     }
 
 
@@ -376,13 +388,33 @@ def resolve_inventory(buf, slot):
 
 
 def iter_gaitem_entries(slot, pgd):
-    """Walk the 8-byte gaitem map that sits between the slot header and
-    PlayerGameData. Yields (offset, handle, item_id)."""
+    """Walk the gaitem map that sits between the slot header and PlayerGameData.
+    Yields (offset, handle, item_id).
+
+    Entries are VARIABLE-SIZE on disk: the {handle, item_id} pair is always 8
+    bytes, but a live weapon carries 13 trailing bytes and a live armour piece 8.
+    Walking a flat 8 bytes desyncs at the first weapon and every later entry is
+    then read from the middle of the previous record - which also made
+    find_free_gaitem() hand back an offset inside a weapon's trailing bytes.
+    Verified against a real save: parsing to PlayerGameData lands exactly on it,
+    and re-serializing the walk reproduces the region byte-for-byte."""
     off = GAITEM_ARRAY_START
     while off + GAITEM_ENTRY_LEN <= pgd:
         handle, item_id = struct.unpack_from("<II", slot, off)
         yield off, handle, item_id
-        off += GAITEM_ENTRY_LEN
+        off += GAITEM_ENTRY_LEN + gaitem_extra_len(handle, item_id)
+
+
+def gaitem_extra_len(handle, item_id):
+    """Trailing bytes after the {handle, item_id} pair for a live entry."""
+    if handle == 0 or item_id == GAITEM_EMPTY_ITEM_ID:
+        return 0
+    cat = (handle >> 28) & 0xF
+    if cat == GAITEM_WEAPON:
+        return 13
+    if cat == GAITEM_ARMOR:
+        return 8
+    return 0
 
 
 def gaitem_map(slot, pgd):
@@ -507,13 +539,14 @@ def cmd_selftest(args):
 
 def cmd_list(args):
     buf = load_save(args.file)
-    print(f"{'slot':>4}  {'name':<20} {'level':>5} {'runes':>12}")
+    print(f"{'slot':>4}  {'name':<20} {'level':>5} {'runes':>12} {'vigor':>6} {'max_hp':>7}")
     for slot in range(NUM_CHAR_SLOTS):
         s = character_summary(buf, slot)
         if s is None:
             print(f"{slot:>4}  {'<empty>':<20}")
         else:
-            print(f"{slot:>4}  {s['name']:<20} {s['level']:>5} {s['runes']:>12}")
+            print(f"{slot:>4}  {s['name']:<20} {s['level']:>5} {s['runes']:>12} "
+                  f"{s['vigor']:>6} {s['max_hp']:>7}")
 
 
 def cmd_list_items(args):
@@ -785,6 +818,115 @@ def cmd_add_aow(args):
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+def cmd_set_hp(args):
+    """Raise the stored HP pool.
+
+    CAVEAT: the game derives max HP from Vigor plus equipment, so it may well
+    recompute this on load and throw the written value away. Nothing here can
+    grant invincibility - that needs runtime memory patching, not a save edit.
+    Treat this as an experiment and keep the backup."""
+    buf = load_save(args.file)
+    require_valid_slot(buf, args.slot)
+    if args.value < 1 or args.value > 0xFFFFFF:
+        raise SystemExit("HP must be 1..16777215 (keep it sane; huge values may "
+                         "display or clamp oddly).")
+    off = slot_data_off(args.slot)
+    data = get_slot(buf, args.slot)
+    pgd = find_pgd(data)
+    old = struct.unpack_from("<3I", data, pgd + PGD_HP_OFF)
+    for i in range(3):                      # hp, max_hp, base_max_hp
+        put_u32(buf, off + pgd + PGD_HP_OFF + i * 4, args.value)
+    print(f"slot {args.slot}: hp/max_hp/base_max_hp {old} -> "
+          f"({args.value}, {args.value}, {args.value})")
+    print("  note: the game may recalculate max HP from Vigor on load and undo this")
+    commit(args.file, buf, [args.slot], args.yes)
+
+
+def weapon_base_id(item_id):
+    """Strip affinity + upgrade level. Weapon param ids are base + affinity*100 +
+    level, and every base is a multiple of 10000 (Uchigatana 9000000, Blood +25 =
+    9001125 -> 9000000)."""
+    return item_id - item_id % 10000
+
+
+def _resolve_weapon_id(token, what):
+    """Accept a numeric param id or a name from the weapon table."""
+    if token is None:
+        raise SystemExit(f"Provide --{what}.")
+    try:
+        return int(token, 0)
+    except ValueError:
+        pass
+    hit = KNOWN_WEAPONS_BY_NAME.get(token.lower())
+    if hit is None:
+        raise SystemExit(f"Unknown weapon name '{token}' for --{what}. "
+                         "Pass a numeric param id instead.")
+    return hit
+
+
+def weapon_label(item_id):
+    lvl = item_id % 100
+    name = KNOWN_WEAPONS.get(item_id) or KNOWN_WEAPONS.get(weapon_base_id(item_id))
+    return (name or f"Weapon #{item_id}") + (f" +{lvl}" if lvl else "")
+
+
+def cmd_replace_weapon(args):
+    """Retarget a weapon you already own to a different weapon.
+
+    Adding a BRAND NEW weapon is not possible on a real save: a new gaitem map
+    entry costs 13 more bytes than the empty one it replaces, and the whole slot
+    tail would have to shift forward to absorb that. Slots are a fixed 0x280000
+    and a played save has no trailing padding left (measured: 0 bytes free on a
+    level-675 slot), so the shift would push live data off the end.
+
+    Rewriting the item_id of an entry that is ALREADY a weapon keeps the record
+    exactly 21 bytes, so nothing moves: the handle, the inventory record and
+    every counter stay untouched, and anything else referencing that handle stays
+    valid. The cost is that the donor weapon is consumed."""
+    buf = load_save(args.file)
+    require_valid_slot(buf, args.slot)
+    src_id = _resolve_weapon_id(args.source, "source")
+    dst_id = _resolve_weapon_id(args.target, "target")
+
+    off = slot_data_off(args.slot)
+    data, inv = resolve_inventory(buf, args.slot)
+    pgd = find_pgd(data)
+    entries = {h: (o, iid) for o, h, iid in iter_gaitem_entries(data, pgd) if h}
+
+    hits = []
+    for k, handle, qty, _, cat, _ in iter_items(data, inv):
+        if cat != GAITEM_WEAPON or handle not in entries:
+            continue
+        ent_off, real = entries[handle]
+        if real == src_id or weapon_base_id(real) == weapon_base_id(src_id):
+            hits.append((k, handle, ent_off, real))
+
+    if not hits:
+        raise SystemExit(f"No held weapon matches --source {args.source}. "
+                         "Run list-items to see what you carry.")
+    if len(hits) > 1 and args.index is None:
+        listing = ", ".join(f"idx {k} ({weapon_label(r)})" for k, _, _, r in hits)
+        raise SystemExit(f"{len(hits)} weapons match: {listing}. Pass --index.")
+    if args.index is not None:
+        hits = [h for h in hits if h[0] == args.index]
+        if not hits:
+            raise SystemExit(f"--index {args.index} is not one of the matches.")
+
+    k, handle, ent_off, real = hits[0]
+    # Same base id is fine and is how an upgrade is expressed: the level lives in
+    # the last two digits, so Great Stars +0 -> +25 is 12180000 -> 12180025. Only
+    # an identical id is a genuine no-op.
+    if real == dst_id:
+        raise SystemExit(f"Already {weapon_label(real)}; nothing to do.")
+
+    put_u32(buf, off + ent_off + 4, dst_id)
+    print(f"slot {args.slot}: inventory idx {k} (handle {handle:#010x}, gaitem "
+          f"{ent_off:#x})\n  {weapon_label(real)}  ->  {weapon_label(dst_id)}")
+    print("  the donor weapon is gone; the target arrives unupgraded unless the "
+          "id you passed already encodes a level")
+    commit(args.file, buf, [args.slot], args.yes)
+
+
 def default_save_path():
     appdata = os.environ.get("APPDATA")
     if not appdata:
@@ -822,6 +964,12 @@ def build_parser():
     sp.add_argument("value", type=lambda x: int(x, 0))
     sp.set_defaults(func=cmd_set_rune)
 
+    sp = sub.add_parser("set-hp", help="set hp/max_hp/base_max_hp (may be "
+                                       "recalculated from Vigor on load)")
+    sp.add_argument("--slot", type=int, default=0)
+    sp.add_argument("value", type=lambda x: int(x, 0))
+    sp.set_defaults(func=cmd_set_hp)
+
     sp = sub.add_parser("set-stats", help="respec: set stats directly (level auto = sum-79)")
     sp.add_argument("--slot", type=int, default=0)
     sp.add_argument("--wretch", action="store_true", help="reset all 8 stats to 10 (level 1)")
@@ -845,6 +993,19 @@ def build_parser():
     sp.add_argument("--key", action="store_true", help="add into the key-items array (medallions, maps, cookbooks, crystal tears...)")
     sp.add_argument("--qty", type=int, required=True)
     sp.set_defaults(func=cmd_add_item)
+
+    sp = sub.add_parser("replace-weapon",
+                        help="retarget a weapon you own to a different one "
+                             "(adding a new weapon is impossible - see the docstring)")
+    sp.add_argument("--slot", type=int, default=0)
+    sp.add_argument("--source", required=True,
+                    help="weapon you currently hold and are willing to lose "
+                         "(name or param id)")
+    sp.add_argument("--target", required=True,
+                    help="weapon to turn it into (name or param id)")
+    sp.add_argument("--index", type=int,
+                    help="record index from list-items, when --source is ambiguous")
+    sp.set_defaults(func=cmd_replace_weapon)
 
     sp = sub.add_parser("add-aow", help="add an Ash of War (writes a gaitem map entry too)")
     sp.add_argument("--slot", type=int, default=0)
