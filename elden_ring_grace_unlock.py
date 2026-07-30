@@ -28,7 +28,12 @@ confirmed against the character's known progress as well: regions it has certain
 cleared must read lit, regions it has certainly never entered must read dark. On an
 untouched save exactly one offset satisfies all of it. Once graces have been
 unlocked the dark half stops being true, so auto-detection deliberately refuses
-rather than guessing - pass --base to re-run on an already-unlocked save."""
+rather than guessing - pass --base to re-run on an already-unlocked save.
+
+Boss kills are bits in the same block, which is why `respawn-boss` can clear one:
+the world spawns a field boss again once its defeat bit reads 0. Clearing a bit is
+the mirror image of setting one, so it goes through the same addressing and the
+same checksum refresh on commit."""
 import argparse
 import os
 import struct
@@ -80,17 +85,34 @@ FLAG_TABLES = {
 }
 
 
-def load_table(category):
+BOSS_TABLE = "boss-flag-ids.tsv"
+
+
+def load_flag_tsv(filename):
     out = []
-    with open(os.path.join(DATA, FLAG_TABLES[category])) as fh:
+    with open(os.path.join(DATA, filename)) as fh:
         for line in fh:
             fid, name = line.rstrip("\n").split("\t")
             out.append((int(fid), name))
     return out
 
 
+def load_table(category):
+    return load_flag_tsv(FLAG_TABLES[category])
+
+
 def load_maps():
     return load_table("maps")
+
+
+def match_bosses(token):
+    """A boss is picked either by its raw flag id or by a case-insensitive
+    substring of its display name."""
+    bosses = load_flag_tsv(BOSS_TABLE)
+    if token.isdigit():
+        return [b for b in bosses if b[0] == int(token)]
+    needle = token.lower()
+    return [b for b in bosses if needle in b[1].lower()]
 
 
 def flag_addr(bst, event_id):
@@ -198,6 +220,50 @@ def cmd_flags(args, buf, slot, base, bst, category):
     E.commit(args.file, buf, [args.slot], args.yes)
 
 
+def cmd_boss_report(args, slot, base, bst):
+    """List boss-defeat flags and their state, optionally filtered by --boss."""
+    bosses = match_bosses(args.boss) if args.boss else load_flag_tsv(BOSS_TABLE)
+    if not bosses:
+        raise SystemExit(f"no boss matches {args.boss!r}")
+    dead = 0
+    for fid, name in bosses:
+        addr = flag_addr(bst, fid)
+        if not addr:
+            print(f"  {'no-block':<8} {fid:<12} {name}")
+            continue
+        killed = read_flag(slot, base, addr)
+        dead += killed
+        print(f"  {'dead' if killed else 'alive':<8} {fid:<12} {name}")
+    print(f"\n{dead}/{len(bosses)} defeated")
+
+
+def cmd_respawn_boss(args, buf, slot, base, bst):
+    """Clear one boss's defeat flag so the world spawns it again."""
+    if not args.boss:
+        raise SystemExit("respawn-boss needs --boss <flag id or name substring>")
+    hits = match_bosses(args.boss)
+    if not hits:
+        raise SystemExit(f"no boss matches {args.boss!r}")
+    if len(hits) > 1:
+        print(f"{args.boss!r} matches {len(hits)} bosses, narrow it down:")
+        for fid, name in hits:
+            print(f"  {fid:<12} {name}")
+        raise SystemExit("refusing to touch the save.")
+
+    fid, name = hits[0]
+    addr = flag_addr(bst, fid)
+    if not addr:
+        raise SystemExit(f"flag {fid} sits in a block the BST does not map.")
+    if not read_flag(slot, base, addr):
+        print(f"{name} is already alive (flag {fid} is clear); nothing to do.")
+        return
+
+    byte_off, bit = addr
+    buf[E.slot_data_off(args.slot) + base + byte_off] &= ~(1 << bit) & 0xFF
+    print(f"clearing defeat flag {fid}: {name}")
+    E.commit(args.file, buf, [args.slot], args.yes)
+
+
 def cmd_report(args, slot, base, bst, graces):
     print("map regions:")
     for fid, name in load_maps():
@@ -259,8 +325,11 @@ def main():
     p.add_argument("--base", type=lambda x: int(x, 0),
                    help="event-flag block offset, for a save already unlocked once "
                         "(auto-detection only works on an untouched save)")
+    p.add_argument("--boss", help="flag id or name substring, for boss-report "
+                                  "and respawn-boss")
     p.add_argument("cmd",
-                   choices=["report", "unlock"] + [f"unlock-{c}" for c in FLAG_TABLES])
+                   choices=["report", "unlock", "boss-report", "respawn-boss"]
+                           + [f"unlock-{c}" for c in FLAG_TABLES])
     args = p.parse_args()
 
     buf = E.load_save(args.file)
@@ -282,6 +351,10 @@ def main():
 
     if args.cmd == "report":
         cmd_report(args, slot, base, bst, graces)
+    elif args.cmd == "boss-report":
+        cmd_boss_report(args, slot, base, bst)
+    elif args.cmd == "respawn-boss":
+        cmd_respawn_boss(args, buf, slot, base, bst)
     elif args.cmd.startswith("unlock-"):
         cmd_flags(args, buf, slot, base, bst, args.cmd[len("unlock-"):])
     else:
