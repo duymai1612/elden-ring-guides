@@ -30,6 +30,7 @@ import hashlib
 import os
 import shutil
 import struct
+import subprocess
 import sys
 import time
 
@@ -510,7 +511,51 @@ def backup_file(path):
     return dst
 
 
-def commit(path, buf, edited_slots, assume_yes):
+# Substrings that identify a live game session. The game's argv is a WINDOWS
+# path even when it runs under Wine, so anything written with forward slashes
+# never matches - these deliberately key off the bare directory / binary names.
+GAME_PROCESS_MARKERS = ("ELDEN RING", "eldenring.exe", "me3-launcher", "me3.exe")
+# A shell or python invocation that merely MENTIONS the save path also carries
+# the marker in its argv - including this tool's own command line. Those are not
+# game sessions, and treating them as such would block every write made from a
+# command line that names the game directory.
+NON_GAME_MARKERS = ("/bin/sh", "/bin/zsh", "/bin/bash", "python", os.path.basename(__file__))
+
+
+def running_game_processes():
+    """Command lines of any live Elden Ring / me3 process, best effort.
+
+    Editing the save while the game is up is silently useless: the game holds
+    the whole save in memory and rewrites the file on its next autosave, so the
+    edit lands, verifies clean, and then vanishes minutes later with nothing to
+    show it ever happened. Cheaper to refuse the write than to debug that.
+
+    Returns an empty list when the process list cannot be read, so a platform
+    this does not understand degrades to the old behaviour instead of blocking.
+    """
+    cmd = ["tasklist", "/fo", "csv", "/nh"] if os.name == "nt" else ["ps", "-Ao", "args="]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return [line.strip()[:110] for line in out.splitlines()
+            if any(marker in line for marker in GAME_PROCESS_MARKERS)
+            and not any(marker in line for marker in NON_GAME_MARKERS)]
+
+
+def commit(path, buf, edited_slots, assume_yes, ignore_running_game=False):
+    if not ignore_running_game:
+        live = running_game_processes()
+        if live:
+            listing = "\n  ".join(live[:4])
+            raise SystemExit(
+                "The game appears to be RUNNING. Refusing to write.\n  "
+                + listing
+                + "\n\nThe game keeps the save in memory and overwrites the file on its "
+                  "next autosave, so this edit would be thrown away without any error. "
+                  "Quit the game, wait for the session to clear, then run this again.\n"
+                  "Pass --ignore-running-game to write anyway.")
+
     for slot in edited_slots:
         refresh_slot_checksum(buf, slot)
 
@@ -599,7 +644,7 @@ def cmd_set_rune(args):
     old = u32(data, pgd + PGD_RUNES_OFF)
     put_u32(buf, off + pgd + PGD_RUNES_OFF, args.value)
     print(f"slot {args.slot}: runes {old} -> {args.value}")
-    commit(args.file, buf, [args.slot], args.yes)
+    commit(args.file, buf, [args.slot], args.yes, args.ignore_running_game)
 
 
 def cmd_set_stats(args):
@@ -642,7 +687,7 @@ def cmd_set_stats(args):
     print(f"slot {args.slot}: level {old_level} -> {level}")
     for i, name in enumerate(STAT_NAMES):
         print(f"  {name:12} {cur[i]:>3} -> {new[i]:>3}")
-    commit(args.file, buf, [args.slot], args.yes)
+    commit(args.file, buf, [args.slot], args.yes, args.ignore_running_game)
 
 
 def _match_item_id(args):
@@ -705,7 +750,7 @@ def cmd_set_qty(args):
     rec_off = off + inv["common_off"] + i * ITEM_RECORD_LEN
     put_u32(buf, rec_off + 4, args.qty)
     print(f"slot {args.slot}: {describe_item(cat, item_id)} (idx {i}) qty {old_qty} -> {args.qty}")
-    commit(args.file, buf, [args.slot], args.yes)
+    commit(args.file, buf, [args.slot], args.yes, args.ignore_running_game)
 
 
 def cmd_add_item(args):
@@ -740,7 +785,7 @@ def cmd_add_item(args):
             put_u32(buf, off + arr_off + k * ITEM_RECORD_LEN + 4, new_qty)
             print(f"slot {args.slot}: {describe_item(cat, item_id)} already held, "
                   f"qty {qty} -> {new_qty}")
-            commit(args.file, buf, [args.slot], args.yes)
+            commit(args.file, buf, [args.slot], args.yes, args.ignore_running_game)
             return
 
     # Write into the first FREE slot (NOT index==count: the array has gaps, so
@@ -762,7 +807,7 @@ def cmd_add_item(args):
     where = "key" if args.key else "common"
     print(f"slot {args.slot}: added {describe_item(cat, item_id)} x{args.qty} "
           f"(item_id {item_id}, handle {handle:#010x}, {where} array slot {free})")
-    commit(args.file, buf, [args.slot], args.yes)
+    commit(args.file, buf, [args.slot], args.yes, args.ignore_running_game)
 
 
 def _resolve_aow_target(args):
@@ -826,7 +871,7 @@ def cmd_add_aow(args):
     name = KNOWN_AOW.get(gem_id, f"Ash of War #{gem_id}")
     print(f"slot {args.slot}: added {name} (gem_id {gem_id}, handle {handle:#010x}, "
           f"gaitem offset {ga_off:#x}, common array slot {free})")
-    commit(args.file, buf, [args.slot], args.yes)
+    commit(args.file, buf, [args.slot], args.yes, args.ignore_running_game)
 
 
 # ---------------------------------------------------------------------------
@@ -853,7 +898,7 @@ def cmd_set_hp(args):
     print(f"slot {args.slot}: hp/max_hp/base_max_hp {old} -> "
           f"({args.value}, {args.value}, {args.value})")
     print("  note: the game may recalculate max HP from Vigor on load and undo this")
-    commit(args.file, buf, [args.slot], args.yes)
+    commit(args.file, buf, [args.slot], args.yes, args.ignore_running_game)
 
 
 def weapon_base_id(item_id):
@@ -949,7 +994,7 @@ def cmd_replace_armor(args):
     print(f"slot {args.slot}: gaitem {ent_off:#x} (handle {handle:#010x})\n"
           f"  {armor_label(src_id)}  ->  {armor_label(dst_id)}")
     print("  the donor piece is gone")
-    commit(args.file, buf, [args.slot], args.yes)
+    commit(args.file, buf, [args.slot], args.yes, args.ignore_running_game)
 
 
 def cmd_list_armor(args):
@@ -1023,7 +1068,7 @@ def cmd_replace_weapon(args):
           f"{ent_off:#x})\n  {weapon_label(real)}  ->  {weapon_label(dst_id)}")
     print("  the donor weapon is gone; the target arrives unupgraded unless the "
           "id you passed already encodes a level")
-    commit(args.file, buf, [args.slot], args.yes)
+    commit(args.file, buf, [args.slot], args.yes, args.ignore_running_game)
 
 
 def default_save_path():
@@ -1045,6 +1090,10 @@ def build_parser():
     p.add_argument("-f", "--file", default=default_save_path(),
                    help="path to ER0000.sl2 / ER0000.co2 (auto-detected on Windows)")
     p.add_argument("-y", "--yes", action="store_true", help="skip the confirmation prompt")
+    p.add_argument("--ignore-running-game", action="store_true",
+                   help="write even when the game looks like it is running. The game "
+                        "overwrites the save from memory on its next autosave, so the "
+                        "edit will almost certainly be lost")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sp = sub.add_parser("selftest", help="verify the tool's model matches your file")
