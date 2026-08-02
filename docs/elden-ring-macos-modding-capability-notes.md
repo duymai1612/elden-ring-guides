@@ -11,6 +11,8 @@ Ghi lại ranh giới đã kiểm chứng bằng thực nghiệm, để không p
 | Bật Site of Grace, hiện map, whetblade, cookbook, summoning pool | `elden_ring_grace_unlock.py` | qua event flag, không phải item |
 | Thay asset (text, font, msgbnd) | package của me3 | bản Việt hoá đang chạy bằng cách này |
 | Save riêng để luyện tập | `savefile` trong profile me3 | `luyen-tap.command` dùng `ER_luyentap.sl2`, save chính không bị đụng |
+| Đọc / đổi giáp trong save | `... list-armor`, `... replace-armor` | armor lưu `0x10000000 \| protector_param_id` trong gaitem map. Cùng cơ chế `replace-weapon`, chỉ ghi lại item_id nên không có gì dịch chuyển |
+| Mod trang phục (model / texture) | thả file vào `Game/mod/parts/` | **chỉ mod dạng parts-replacer**, xem mục dưới |
 
 ## Không làm được
 
@@ -21,6 +23,30 @@ Ghi lại ranh giới đã kiểm chứng bằng thực nghiệm, để không p
 | ER Practice Tool (`jdsd_er_practice_tool.dll`) | d3dmetal: MinHook không vá được (`MH_ERROR_NOT_EXECUTABLE`). dxvk: hook được nhưng VKD3D thiếu thư viện chuyển đổi DXIL → shader DX12 không biên dịch → crash | Thử cả hai backend |
 
 Hệ quả: **không có cách nào cho HP không giới hạn** trên setup này. Muốn luyện boss không chết thì chỉ còn dùng save riêng và chết thoải mái.
+
+## Cài mod trang phục (parts-replacer)
+
+Profile `viet-hoa.me3` trỏ package thẳng vào `ELDEN RING\Game\mod`, và thư mục đó đang
+giữ đúng cấu trúc thư mục gốc của game (`font/`, `msg/`). Nên thêm trang phục chỉ là:
+
+1. Tải mod trên Nexus (**phải đăng nhập** - trang trả 403 với bot, API trả 401 nếu không
+   có API key, nên không tự động tải hộ được)
+2. Giải nén, **kiểm tra danh sách file**:
+   - chỉ có `.partsbnd.dcx` → parts-replacer, dùng được
+   - có `regulation.bin` ở gốc → **bỏ**, mod đó thêm item mới nên chắc chắn chết lúc load
+     nhân vật (xem mục "Không làm được")
+3. Chép file `.partsbnd.dcx` vào `Game/mod/parts/` (đã tạo sẵn)
+4. **Không cần sửa profile me3.** Package đã trỏ vào `mod`, thêm thư mục con là me3 tự nhận
+5. Thử bằng `luyen-tap.command` trước - profile đó dùng save riêng nên save chính an toàn
+
+Cú pháp profile me3 v1 dùng `[[package]]` với `id` và `path` (số ít). Nhiều hướng dẫn trên
+mạng ghi `[[packages]]` với `name` và `paths` - sai, me3 không đọc được.
+
+Mã trang phục để tra khi mod đổi đúng bộ nào: `elden_ring_save_editor.py list-armor` in ra
+protector param id, ví dụ `Deathbed Dress` = 1930100, `White Mask` = 680000.
+
+Chưa ai đo parts-replacer trên đúng CrossOver này. Về nguyên tắc nó đi cùng đường asset
+override với font/msg đang chạy tốt, nhưng chưa xác nhận bằng thực nghiệm.
 
 ## Điểm cần biết về `regulation.bin`
 

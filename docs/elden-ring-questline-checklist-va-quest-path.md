@@ -519,7 +519,7 @@ Elden Beast. Nên gom hết Mending Rune rồi mới quyết.
 | Món | Vị trí | Vì sao biết là chưa có |
 |---|---|---|
 | **Black Knife Tiche** | Ringleader's Evergaol, Moonlight Altar | Alecto còn alive (đọc save 2026-08-02 13:00) |
-| **Ronin's Set** | Shabriri ở Zamor Ruins | chưa xác nhận được từ save (xem ghi chú dưới) |
+| ~~**Ronin's Set**~~ | Shabriri ở Zamor Ruins | **đã có đủ** - Iron Kasa + Armor + Gauntlets + Greaves (đọc lại giáp 2026-08-02) |
 | ~~**Glintstone Whetblade**~~ | Raya Lucaria Academy | **bỏ qua được** - affinity Magic + Frost đã unlock sẵn, xem dưới |
 | **Blackflame Monk Amon** | Stray Mimic Tear, Hidden Path to the Haligtree | boss còn alive + không có ash id 228000 trong túi |
 
@@ -597,6 +597,11 @@ Chưa xem từng video, chỉ liệt kê theo tiêu đề kênh đăng.
   185/366 món giáp không resolve được tên. Không dùng file này để kết luận thiếu/đủ giáp.
   Vũ khí thì tra được bình thường.
 - Bell bearing **bị tiêu khi đưa Twin Maiden Husks** → vắng mặt trong túi nghĩa là ĐÃ dùng.
+- **Bảng tên armor KHÔNG hỏng** - đính chính ghi chú cũ. Chỉ ~40 dòng đầu của
+  `elden_ring_items_full_reference.json["armor"]` là placeholder `Type N`, phần còn lại
+  có tên thật. Lỗi trước là do quên trừ offset `0x10000000`: armor trong gaitem map lưu
+  `0x10000000 | protector_param_id`. Trừ đúng thì resolve **220/220 món, 0 miss**.
+  Tool đã có `list-armor` và `replace-armor` dùng đúng cách này.
 - **Tool đã bật flag thì item ngoài thế giới không tự chui vào túi.** 13/13 flag whetblade
   ON nhưng `Glintstone Whetblade` không có trong save. Muốn biết một món có thật sự nằm
   đâu đó trong save không, quét cả slot cho handle `(cat << 28) | item_id` thay vì chỉ
