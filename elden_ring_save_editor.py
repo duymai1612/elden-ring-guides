@@ -70,6 +70,10 @@ INV_KEY_CAP = 384            # 0x180 held key items
 ITEM_RECORD_LEN = 12         # gaitem_handle u32 | quantity u32 | index u32
 MAX_ITEM_QTY = 999
 
+# Armor stores its protector param id offset by this in the gaitem map, so the
+# raw value on disk for White Mask (param 680000) is 0x10000000 | 680000.
+ARMOR_ITEM_ID_OFF = 0x10000000
+
 # gaitem-handle high nibble -> category
 GAITEM_WEAPON = 0x8
 GAITEM_ARMOR = 0x9
@@ -110,10 +114,12 @@ KNOWN_GOODS = {
 KNOWN_TALISMANS = {}
 KNOWN_AOW = {}
 KNOWN_WEAPONS = {}
+KNOWN_ARMOR = {}
 KNOWN_GOODS_BY_NAME = {v.lower(): k for k, v in KNOWN_GOODS.items()}
 KNOWN_TALISMANS_BY_NAME = {}
 KNOWN_AOW_BY_NAME = {}
 KNOWN_WEAPONS_BY_NAME = {}
+KNOWN_ARMOR_BY_NAME = {}
 
 
 def _load_item_db():
@@ -150,6 +156,14 @@ def _load_item_db():
             for sid, name in data.get("weapons", {}).items():
                 KNOWN_WEAPONS[int(sid)] = name
                 KNOWN_WEAPONS_BY_NAME.setdefault(name.lower(), int(sid))
+            # The first few dozen protector rows are engine placeholders named
+            # "Type 1", "Type 2"... - real gear starts after them, so drop those
+            # or a name lookup for a real piece can collide with a placeholder.
+            for sid, name in data.get("armor", {}).items():
+                if name.startswith("Type "):
+                    continue
+                KNOWN_ARMOR[int(sid)] = name
+                KNOWN_ARMOR_BY_NAME.setdefault(name.lower(), int(sid))
             break
 
 
@@ -870,6 +884,91 @@ def weapon_label(item_id):
     return (name or f"Weapon #{item_id}") + (f" +{lvl}" if lvl else "")
 
 
+def _resolve_armor_id(token, what):
+    """Accept a numeric protector param id or a name from the armor table."""
+    if token is None:
+        raise SystemExit(f"Provide --{what}.")
+    try:
+        return int(token, 0)
+    except ValueError:
+        pass
+    hit = KNOWN_ARMOR_BY_NAME.get(token.lower())
+    if hit is None:
+        raise SystemExit(f"Unknown armor name '{token}' for --{what}. "
+                         "Pass a numeric param id instead.")
+    return hit
+
+
+def armor_label(param_id):
+    return KNOWN_ARMOR.get(param_id) or f"Armor #{param_id}"
+
+
+def cmd_replace_armor(args):
+    """Retarget a piece of armor you own to a different piece.
+
+    Same trick as replace-weapon and the same reason it is safe: only the
+    item_id field of an existing gaitem entry is rewritten, so the record keeps
+    its size, the handle and the inventory record are untouched, and nothing in
+    the slot shifts. Adding a brand new piece is impossible for the same reason
+    it is impossible for weapons - there is no spare room in the slot.
+
+    Armor stores its protector param id offset by ARMOR_ITEM_ID_OFF in the
+    gaitem map, so the raw value on disk is 0x10000000 | param_id. Callers deal
+    in plain param ids (White Mask = 680000) and this converts."""
+    buf = load_save(args.file)
+    require_valid_slot(buf, args.slot)
+    src_id = _resolve_armor_id(args.source, "source")
+    dst_id = _resolve_armor_id(args.target, "target")
+    if src_id == dst_id:
+        raise SystemExit(f"Source and target are both {armor_label(src_id)}; nothing to do.")
+
+    off = slot_data_off(args.slot)
+    data, inv = resolve_inventory(buf, args.slot)
+    pgd = find_pgd(data)
+
+    hits = []
+    for ent_off, handle, iid in iter_gaitem_entries(data, pgd):
+        if not handle or ((handle >> 28) & 0xF) != GAITEM_ARMOR:
+            continue
+        if iid - ARMOR_ITEM_ID_OFF == src_id:
+            hits.append((ent_off, handle, iid))
+
+    if not hits:
+        raise SystemExit(f"No owned armor matches --source {args.source}. "
+                         "Run list-armor to see what you carry.")
+    if len(hits) > 1 and args.index is None:
+        listing = ", ".join(f"gaitem {o:#x}" for o, _, _ in hits)
+        raise SystemExit(f"{len(hits)} copies match ({listing}). Pass --index "
+                         "with the 0-based position to pick one.")
+    idx = args.index or 0
+    if idx >= len(hits):
+        raise SystemExit(f"--index {idx} is out of range ({len(hits)} match).")
+
+    ent_off, handle, _ = hits[idx]
+    put_u32(buf, off + ent_off + 4, ARMOR_ITEM_ID_OFF | dst_id)
+    print(f"slot {args.slot}: gaitem {ent_off:#x} (handle {handle:#010x})\n"
+          f"  {armor_label(src_id)}  ->  {armor_label(dst_id)}")
+    print("  the donor piece is gone")
+    commit(args.file, buf, [args.slot], args.yes)
+
+
+def cmd_list_armor(args):
+    buf = load_save(args.file)
+    require_valid_slot(buf, args.slot)
+    data = get_slot(buf, args.slot)
+    pgd = find_pgd(data)
+    if pgd is None:
+        raise SystemExit(f"Could not locate character data in slot {args.slot}.")
+    rows = []
+    for _, handle, iid in iter_gaitem_entries(data, pgd):
+        if handle and ((handle >> 28) & 0xF) == GAITEM_ARMOR:
+            rows.append(iid - ARMOR_ITEM_ID_OFF)
+    print(f"{'param_id':>9}  name")
+    for pid in sorted(rows):
+        print(f"{pid:>9}  {armor_label(pid)}")
+    print(f"({len(rows)} pieces, {len(set(rows))} distinct)")
+
+
 def cmd_replace_weapon(args):
     """Retarget a weapon you already own to a different weapon.
 
@@ -1006,6 +1105,22 @@ def build_parser():
     sp.add_argument("--index", type=int,
                     help="record index from list-items, when --source is ambiguous")
     sp.set_defaults(func=cmd_replace_weapon)
+
+    sp = sub.add_parser("list-armor", help="list armor pieces you own")
+    sp.add_argument("--slot", type=int, default=0)
+    sp.set_defaults(func=cmd_list_armor)
+
+    sp = sub.add_parser("replace-armor",
+                        help="retarget a piece of armor you own to a different one")
+    sp.add_argument("--slot", type=int, default=0)
+    sp.add_argument("--source", required=True,
+                    help="armor you currently hold and are willing to lose "
+                         "(name or protector param id)")
+    sp.add_argument("--target", required=True,
+                    help="armor to turn it into (name or protector param id)")
+    sp.add_argument("--index", type=int,
+                    help="0-based pick when you own several copies of --source")
+    sp.set_defaults(func=cmd_replace_armor)
 
     sp = sub.add_parser("add-aow", help="add an Ash of War (writes a gaitem map entry too)")
     sp.add_argument("--slot", type=int, default=0)
