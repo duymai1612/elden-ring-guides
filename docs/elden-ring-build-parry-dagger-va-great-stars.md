@@ -119,12 +119,18 @@ Bốn câu `Fortification` (Flame/Magic/Lightning/Divine) lắp theo loại sát
 
 ## Physick
 
-Anh có `Flask of Wondrous Physick` nhưng **không có crystal tear nào** - cả game có 90
-loại, túi trống trơn. Ba cái đáng đi nhặt cho build này:
+Đang có **14 crystal tear** (đọc lại bằng param id ngày 2026-08-04 - lần đọc trước dùng
+grep theo tên nên báo nhầm là không có cái nào). Bình pha được hai tear mỗi lần.
 
-- **`Stonebarb Cracked Tear`** - tăng thẳng stance damage, đúng thứ đang thiếu
-- **`Thorny Cracked Tear`** - tăng sát thương theo chuỗi đòn liên tiếp
-- **`Crimson Crystal Tear`** - hồi máu
+| Dùng khi | Pha gì | Vì sao |
+|---|---|---|
+| **Bộ Great Stars** | `Stonebarb Cracked Tear` + `Spiked Cracked Tear` | Stonebarb tăng thẳng stance damage; Spiked tăng sát thương **charged attack**, mà charged R2 là đòn chủ lực |
+| **Bộ song dao** | `Thorny Cracked Tear` + `Crimsonburst Crystal Tear` | Thorny tăng sát thương theo chuỗi đòn liên tiếp, cùng cơ chế với `Rotten Winged Sword Insignia` |
+| **Trận Mohg** | `Purifying Crystal Tear` + `Crimsonburst Crystal Tear` | Purifying vô hiệu hoá hoàn toàn đòn **Nihil** ở phase 2 |
+
+Còn lại trong túi: `Crimson`, `Greenspill`, `Ruptured`, `Faith-knot`,
+`Intelligence-knot`, `Strength-knot`, và ba cái `-Shrouding` (Holy/Lightning/Magic).
+Ba cái knot cộng stat nên vô dụng với nhân vật 99 tất cả.
 
 ---
 
