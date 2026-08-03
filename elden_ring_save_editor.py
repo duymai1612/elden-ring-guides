@@ -971,16 +971,27 @@ def cmd_replace_armor(args):
     data, inv = resolve_inventory(buf, args.slot)
     pgd = find_pgd(data)
 
+    # Walk the INVENTORY and resolve back into the gaitem map, never the other
+    # way round. A gaitem entry with no inventory record behind it is dead
+    # weight the game ignores on load and drops on its next save, so retargeting
+    # one produces a piece that never shows up in game (measured: 24 of 218
+    # armor entries on this save are orphans like that).
+    held_handles = set()
+    for arr, cap in ((inv["common_off"], INV_COMMON_CAP), (inv["key_off"], INV_KEY_CAP)):
+        for _, handle, _, _ in _iter_records(data, arr, cap):
+            held_handles.add(handle)
+
     hits = []
     for ent_off, handle, iid in iter_gaitem_entries(data, pgd):
         if not handle or ((handle >> 28) & 0xF) != GAITEM_ARMOR:
             continue
-        if iid - ARMOR_ITEM_ID_OFF == src_id:
+        if iid - ARMOR_ITEM_ID_OFF == src_id and handle in held_handles:
             hits.append((ent_off, handle, iid))
 
     if not hits:
-        raise SystemExit(f"No owned armor matches --source {args.source}. "
-                         "Run list-armor to see what you carry.")
+        raise SystemExit(f"No armor in your inventory matches --source {args.source}. "
+                         "Run list-armor to see what you carry (pieces marked "
+                         "'orphan' are not usable as a donor).")
     if len(hits) > 1 and args.index is None:
         listing = ", ".join(f"gaitem {o:#x}" for o, _, _ in hits)
         raise SystemExit(f"{len(hits)} copies match ({listing}). Pass --index "
@@ -998,20 +1009,32 @@ def cmd_replace_armor(args):
 
 
 def cmd_list_armor(args):
+    """List owned armor, flagging entries with no inventory record behind them.
+
+    Those orphans are invisible in game and the game drops them on its next
+    save, so they must not be used as a replace-armor donor."""
     buf = load_save(args.file)
     require_valid_slot(buf, args.slot)
-    data = get_slot(buf, args.slot)
+    data, inv = resolve_inventory(buf, args.slot)
     pgd = find_pgd(data)
     if pgd is None:
         raise SystemExit(f"Could not locate character data in slot {args.slot}.")
+
+    held_handles = set()
+    for arr, cap in ((inv["common_off"], INV_COMMON_CAP), (inv["key_off"], INV_KEY_CAP)):
+        for _, handle, _, _ in _iter_records(data, arr, cap):
+            held_handles.add(handle)
+
     rows = []
     for _, handle, iid in iter_gaitem_entries(data, pgd):
         if handle and ((handle >> 28) & 0xF) == GAITEM_ARMOR:
-            rows.append(iid - ARMOR_ITEM_ID_OFF)
+            rows.append((iid - ARMOR_ITEM_ID_OFF, handle in held_handles))
+
     print(f"{'param_id':>9}  name")
-    for pid in sorted(rows):
-        print(f"{pid:>9}  {armor_label(pid)}")
-    print(f"({len(rows)} pieces, {len(set(rows))} distinct)")
+    for pid, in_bag in sorted(rows):
+        print(f"{pid:>9}  {armor_label(pid)}{'' if in_bag else '   [orphan]'}")
+    live = sum(1 for _, in_bag in rows if in_bag)
+    print(f"({len(rows)} entries, {live} in inventory, {len(rows) - live} orphan)")
 
 
 def cmd_replace_weapon(args):
