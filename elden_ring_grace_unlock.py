@@ -67,11 +67,20 @@ def load_bst():
 
 
 def load_graces():
+    """Base-game graces plus the Shadow of the Erdtree ones.
+
+    The two tables are kept apart because they were derived differently: the base
+    list came from ER-Save-Editor's src/db/graces.rs, the DLC list straight out of
+    BonfireWarpParam in this machine's own regulation.bin (rows whose areaNo is a
+    DLC map, named through PlaceName_dlc02.fmg). Reading the param back proved the
+    base list too - all 314 of its flags appear at BonfireWarpParam offset 4 - so
+    the same field, read on the DLC rows, is the same kind of value."""
     out = []
-    with open(os.path.join(DATA, "grace-event-flag-ids.tsv")) as fh:
-        for line in fh:
-            fid, region, name = line.rstrip("\n").split("\t")
-            out.append((int(fid), region, name))
+    for table in ("grace-event-flag-ids.tsv", "dlc-grace-event-flag-ids.tsv"):
+        with open(os.path.join(DATA, table)) as fh:
+            for line in fh:
+                fid, region, name = line.rstrip("\n").split("\t")
+                out.append((int(fid), region, name))
     return out
 
 

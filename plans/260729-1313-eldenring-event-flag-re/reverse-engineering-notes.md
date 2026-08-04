@@ -127,3 +127,56 @@ lại trên save đã unlock thì truyền `--base` (vẫn phải qua kiểm tra
 
 ## Chưa verify
 Chưa mở game. Chỉ mới chứng minh save hợp lệ về cấu trúc và checksum.
+
+---
+
+# Bổ sung DLC Shadow of the Erdtree (2026-08-04)
+
+## Kết luận ngắn
+**Xong.** 105 grace DLC + 5 mảnh bản đồ DLC, lấy thẳng từ `regulation.bin` của
+máy này (bản `DLC02`) chứ không từ thư viện ngoài. Tổng sau khi ghi: 402/419.
+
+## Vì sao phải tự trích
+`ClayAmore/ER-Save-Editor` (nguồn của bảng 314 grace base game) **không có DLC** -
+`src/db/regions.rs` không có một region Realm of Shadow nào. Không tìm được editor
+nào khác có. Nên nguồn duy nhất đáng tin là param của chính game.
+
+## Đường đi
+`regulation.bin` -> AES -> DCX(zstd) -> BND4 -> `BonfireWarpParam.param`.
+Dùng lại `elden_ring_regulation.py`; phần đọc PARAM và paramdef viết thêm
+(scratchpad, ~40 dòng: PARAM 64-bit = 24 byte/row entry, row size suy từ khoảng
+cách giữa hai data offset liền nhau).
+
+Offset field lấy từ `soulsmods/Paramdex` `ER/Defs/BonfireWarpParam.xml`. Bẫy:
+paramdef đầu file là `u8 disableParam_NT:1` + `dummy8 ...:7` - **hai bitfield
+chung một byte**. Nếu parser tách chúng thành 2 byte thì mọi offset lệch 4 và
+`eventflagId` bị đọc ở 8 thay vì 4. Bit packing quyết định bởi KÍCH THƯỚC ô nhớ,
+không phải tên kiểu.
+
+## Tự kiểm chứng (điểm mạnh của cách này)
+Quét mọi offset u32 trong row, đếm xem giá trị nào trùng với 314 flag base game
+đã biết: **offset 4 khớp đúng 314/422 row**, không offset nào khác khớp lấy một
+row. Nghĩa là cùng một field, đọc trên row DLC, chắc chắn cũng là event flag.
+
+Phân loại base/DLC bằng `areaNo` cho kết quả sạch tuyệt đối: area
+10-19/30-39/60 = đúng 314 row base, area 20/21/22/25/28/40/41/42/43/61 = 105 row
+DLC, không có row nào lẫn giữa hai nhóm.
+
+## Bảng thu được
+- `dlc-grace-event-flag-ids.tsv` - 105 grace, flag 72000-76960
+  - m20 Belurat + Enir-Ilim 10, m21 Shadow Keep 14, m22 Stone Coffin Fissure 5,
+    m25 Finger Birthing Grounds 1, m28 Midra's Manse 4, m40-m43 hầm/ngục/lò/hang
+    12, **m61 Realm of Shadow 59**
+- 5 dòng thêm vào `map-reveal-flag-ids.tsv`: `WorldMapPieceParam` row 1000-1004 ->
+  flag 62080-62084. Thứ tự row khớp thứ tự item `Map:` (2008600-2008604), kiểm
+  bằng base game: row 0 -> 62010 -> "Map: Limgrave, West".
+- Base game còn thiếu **62053 Consecrated Snowfield** (row 14), đã bổ sung.
+
+Tên grace lấy từ `PlaceName_dlc02.fmg` trong `mod/msg/engus/item_dlc02.msgbnd.dcx`
+(bản Việt hoá, DCX nén DFLT nên zlib đọc được). `item.msgbnd.dcx` và
+`item_dlc01.msgbnd.dcx` nén KRAK/Oodle - không đọc được trên macOS, nhưng không
+cần vì tên base game đã có sẵn.
+
+## Không đụng tới
+`62065` (row 105, một vùng ngầm không rõ) và `62002`/`62000` (đã set sẵn) - không
+xác định được ý nghĩa nên để nguyên.
