@@ -1,7 +1,11 @@
 # Elden Ring - Tất tần tật về questline (lore, phần thưởng, thứ tự làm)
 
-Nhân vật: `dyu` (slot 1, Lv 713, 8 stat đều 99) | Ảnh chụp save: **2026-08-02 13:00** (81/157 boss)
+Nhân vật: `dyu` (slot 1, Lv 713, 8 stat đều 99) | Ảnh chụp save: **2026-08-05 00:45** (87/157 boss)
 Nguồn trạng thái: đọc trực tiếp `ER0000.sl2` - cờ boss + key item + vũ khí resolve qua gaitem map.
+
+Soát lại toàn bộ 2026-08-05 trước mốc đốt cây, quét cả **116 key item** (mảng mà
+`list-items` không in ra) lẫn common/vũ khí/giáp: bảng "Đã xong (24)" và "Còn lại (4)"
+dưới đây **đúng nguyên vẹn**. Chỉ mục "Đồ còn sót" và Phần 6 sai, đã sửa.
 Nguồn phần thưởng: fextralife, IGN, Polygon, PC Gamer, RPS, Eurogamer, Elden Hub (đã tra từng món).
 Bằng chứng chi tiết: `plans/reports/save-audit-260731-0120-questline-recheck-against-youtube-playlist-report.md`
 Bản DLC: [Checklist questline Shadow of the Erdtree](./elden-ring-dlc-questline-checklist-va-quest-path.md)
@@ -46,9 +50,12 @@ Bỏ hẳn = không mất gì, chỉ không có `Frenzied Flame Seal`. Để dà
 
 ## Đồ còn sót đáng nhặt
 
-`Ronin's Set` (giết Shabriri ở Zamor Ruins - **không cần Frenzied Flame**, xem Phần 6) ·
-`Black Knife Tiche` (Alecto còn sống, Ringleader's Evergaol) ·
-`Blackflame Monk Amon` (giết **Stray Mimic Tear**, Hidden Path to the Haligtree - còn sống)
+`Ronin's Set` (giết Shabriri ở Zamor Ruins - **không cần Frenzied Flame**, xem Phần 6)
+
+Đính chính 2026-08-05: `Black Knife Tiche` và `Blackflame Monk Amon` **đã có, cả hai +10**.
+Alecto và Stray Mimic Tear đều `dead`. Bản trước kết luận sai vì dò ash theo tên chứa chữ
+"Ashes" và theo id chưa nâng cấp - hai ash này không khớp cả hai điều kiện đó. Cách dò đúng:
+lọc `list-items` theo dải id 200000-299999, hậu tố id là mức nâng (`200010` = Tiche +10).
 
 `Glintstone Whetblade` đã gạch khỏi danh sách: affinity Magic + Frost unlock sẵn rồi,
 cầm item không thêm gì. Chi tiết ở Phần 6.
@@ -74,10 +81,9 @@ và dùng bình thường tới hết game. Xem Phần 5.
 
 - [ ] `Ronin's Set` - **giết Shabriri ở Zamor Ruins**. Điều kiện duy nhất là Yura đã bị
       Shabriri chiếm xác (đã xong: có `Eleonora's Poleblade`). Drop kèm `Iron Kasa` + 1000 rune
-- [ ] `Black Knife Tiche` - giết **Alecto** ở Ringleader's Evergaol (Moonlight Altar).
-      Spirit ash mạnh nhất game
+- [x] ~~`Black Knife Tiche`~~ - xong: Alecto `dead`, ash đang **+10** trong túi (id 200010)
 - [x] ~~`Glintstone Whetblade`~~ - không cần: affinity Magic + Frost đã unlock sẵn (Phần 6)
-- [ ] `Blackflame Monk Amon` - giết **Stray Mimic Tear** ở Hidden Path to the Haligtree
+- [x] ~~`Blackflame Monk Amon`~~ - xong: Stray Mimic Tear `dead`, ash **+10** (id 228010)
 - [x] ~~Đổi remembrance ở Enia~~ - xong 2026-08-02: `Blasphemous Blade`, `Rykard's Rancor`,
       `Fortissax's Lightning Spear`, `Death Lightning`
 
@@ -284,8 +290,7 @@ Dumpling (giết Edgar the Revenger = bước cuối)
 
 **Trạng thái:** anh xác nhận đã nộp nốt lần thứ 9 (2026-08-02) → xong cả 9 phần thưởng.
 Số Deathroot trong túi (90) đã bị chỉnh bằng tool nên không dùng làm bằng chứng được;
-`Stray Mimic Tear` vẫn còn sống nhưng không còn cần cho quest này nữa, chỉ còn đáng giết
-để lấy ash `Blackflame Monk Amon`.
+`Stray Mimic Tear` cũng đã chết rồi, ash `Blackflame Monk Amon` đang +10 trong túi.
 
 ### Roderika
 > Cô gái ở Stormhill Shack, mất hết bạn đồng hành, muốn đi Stormveil tìm họ.
@@ -519,10 +524,10 @@ Elden Beast. Nên gom hết Mending Rune rồi mới quyết.
 
 | Món | Vị trí | Vì sao biết là chưa có |
 |---|---|---|
-| **Black Knife Tiche** | Ringleader's Evergaol, Moonlight Altar | Alecto còn alive (đọc save 2026-08-02 13:00) |
+| ~~**Black Knife Tiche**~~ | Ringleader's Evergaol, Moonlight Altar | **đã có +10** (id 200010) - Alecto `dead`. Bản 2026-08-02 đọc sai, xem Phần 1 |
 | ~~**Ronin's Set**~~ | Shabriri ở Zamor Ruins | **đã có đủ** - Iron Kasa + Armor + Gauntlets + Greaves (đọc lại giáp 2026-08-02) |
 | ~~**Glintstone Whetblade**~~ | Raya Lucaria Academy | **bỏ qua được** - affinity Magic + Frost đã unlock sẵn, xem dưới |
-| **Blackflame Monk Amon** | Stray Mimic Tear, Hidden Path to the Haligtree | boss còn alive + không có ash id 228000 trong túi |
+| ~~**Blackflame Monk Amon**~~ | Stray Mimic Tear, Hidden Path to the Haligtree | **đã có +10** (id 228010, không phải 228000) - boss `dead` |
 
 Đã nhặt được rồi, xoá khỏi danh sách cũ: `Mimic Tear Ashes +10` ✅ ·
 `Marais Executioner's Sword` ✅ · `Assassin's Cerulean Dagger` ✅
@@ -607,9 +612,14 @@ Chưa xem từng video, chỉ liệt kê theo tiêu đề kênh đăng.
   ON nhưng `Glintstone Whetblade` không có trong save. Muốn biết một món có thật sự nằm
   đâu đó trong save không, quét cả slot cho handle `(cat << 28) | item_id` thay vì chỉ
   đọc held inventory - held inventory không bao gồm rương ở Roundtable.
-- Đừng nhầm `Mimic Tear Ashes` (drop từ Mimic Tear ở **Nokron**, đã có) với
-  `Blackflame Monk Amon` (drop từ **Stray Mimic Tear** ở Hidden Path to the Haligtree,
-  chưa có, boss còn alive). Hai con khác nhau, tên gần giống nhau.
+- Đừng nhầm `Mimic Tear Ashes` (drop từ Mimic Tear ở **Nokron**) với `Blackflame Monk Amon`
+  (drop từ **Stray Mimic Tear** ở Hidden Path to the Haligtree). Hai con khác nhau, tên gần
+  giống nhau. Cả hai ash đều đã có +10.
+- **Dò spirit ash phải lọc theo dải id 200000-299999, không grep theo tên.** Chỉ một phần
+  ash có chữ "Ashes" trong tên - `Black Knife Tiche`, `Latenna the Albinauric`,
+  `Lhutel the Headless` thì không. Và id mang cả mức nâng ở hai chữ số cuối, nên tìm
+  `228000` sẽ trượt một ash đang ở `228010` (+10). Hai lỗi này cộng lại làm bản 2026-08-02
+  kết luận thiếu 2 ash mà thực ra đã có.
 - Save đã bị chỉnh: **số lượng** item (Deathroot 90, Stonesword Key 98, smithing stone…),
   level/stats, và **130 Sites of Grace unlock bằng tool**. Nên grace và qty **không dùng
   làm bằng chứng tiến độ**. Cờ boss và vũ khí thì tin được (tool không add được weapon).
