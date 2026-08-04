@@ -5,6 +5,8 @@
 > DLC không mở rộng câu chuyện. Nó **lật ngược** câu chuyện: hoá ra Marika không phải nạn nhân, và Miquella không phải người tốt.
 >
 > Quay lại: [Cốt truyện tổng quan](./01-elden-ring-cot-truyen-tong-quan.md)
+>
+> Đọc tiếp: [Questline NPC trong DLC](./06-shadow-of-the-erdtree-questline-npc.md) - các bước, màn chọn phe của Leda và trận Enir-Ilim
 
 ---
 

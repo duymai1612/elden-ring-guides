@@ -11,6 +11,7 @@ Elden Ring giấu gần hết cốt truyện trong mô tả item và vài câu t
 | 3 | [Questline NPC và 6 ending](./03-elden-ring-questline-npc-va-ket-thuc.md) | Ranni, Fia, Goldmask, Dung Eater, Frenzied Flame và ý nghĩa từng ending | Toàn bộ game gốc |
 | 4 | [NPC phụ](./04-elden-ring-npc-phu-va-cau-chuyen-rieng.md) | Millicent, Alexander, Blaidd, Sellen, Boc, Patches và phần còn lại | Toàn bộ game gốc |
 | 5 | [Shadow of the Erdtree](./05-elden-ring-shadow-of-the-erdtree.md) | Nguồn gốc thật của Marika, Messmer, kế hoạch Miquella, Metyr | 🚨 DLC |
+| 6 | [Questline NPC trong DLC](./06-shadow-of-the-erdtree-questline-npc.md) | Đoàn của Miquella, mốc bùa mê tan, Leda và màn chọn phe, trận Enir-Ilim | 🚨 DLC, cả trận cuối |
 
 ---
 
@@ -19,7 +20,9 @@ Elden Ring giấu gần hết cốt truyện trong mô tả item và vài câu t
 - **Chưa phá đảo, chỉ muốn hiểu đang xảy ra chuyện gì:** đọc file 1, rồi phần "Bảng tóm tắt nhanh" của file 2. Dừng ở đó.
 - **Sắp chọn ending:** đọc file 3.
 - **Đã phá đảo game gốc:** đọc hết 1 tới 4, rồi mới sang 5.
-- **Chưa chơi DLC:** đừng mở file 5.
+- **Chưa chơi DLC:** đừng mở file 5 và 6.
+- **Đang chơi DLC:** file 5 cho nền lore, file 6 cho các questline. Muốn danh sách để vừa chơi
+  vừa tick thì mở [Checklist DLC](../elden-ring-dlc-questline-checklist-va-quest-path.md).
 
 ## Quy ước trong tài liệu
 

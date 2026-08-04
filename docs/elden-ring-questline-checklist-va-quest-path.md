@@ -4,6 +4,7 @@ Nhân vật: `dyu` (slot 1, Lv 713, 8 stat đều 99) | Ảnh chụp save: **202
 Nguồn trạng thái: đọc trực tiếp `ER0000.sl2` - cờ boss + key item + vũ khí resolve qua gaitem map.
 Nguồn phần thưởng: fextralife, IGN, Polygon, PC Gamer, RPS, Eurogamer, Elden Hub (đã tra từng món).
 Bằng chứng chi tiết: `plans/reports/save-audit-260731-0120-questline-recheck-against-youtube-playlist-report.md`
+Bản DLC: [Checklist questline Shadow of the Erdtree](./elden-ring-dlc-questline-checklist-va-quest-path.md)
 
 Playlist tham chiếu: "Elden Ring - Full Questline" - kênh **VỢ Cho Chơi Game**
 https://www.youtube.com/playlist?list=PLWsanzojPwHfLQi0-O2qeDMCiy8hx9TOj
