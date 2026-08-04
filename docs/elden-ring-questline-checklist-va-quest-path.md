@@ -620,6 +620,12 @@ Chưa xem từng video, chỉ liệt kê theo tiêu đề kênh đăng.
   `Lhutel the Headless` thì không. Và id mang cả mức nâng ở hai chữ số cuối, nên tìm
   `228000` sẽ trượt một ash đang ở `228010` (+10). Hai lỗi này cộng lại làm bản 2026-08-02
   kết luận thiếu 2 ash mà thực ra đã có.
+- **`list-items` đã vá 2026-08-05, không cần script dump riêng nữa.** Trước đó nó chỉ in
+  mảng common và giấu 116 key item, nên mọi kết luận "món X absent" đều vô giá trị với key
+  item - đó là gốc của các kết luận sai về Rogier, Sellen, Dung Eater, Rya, Diallos. Giờ
+  lệnh in cả hai mảng kèm cột `where`, resolve sẵn tên vũ khí/giáp/AoW, và có
+  `--array common|key` để lọc. Cách soát đúng bây giờ chỉ là:
+  `list-items --slot 1 | grep -i '<tên item mốc cuối>'`.
 - Save đã bị chỉnh: **số lượng** item (Deathroot 90, Stonesword Key 98, smithing stone…),
   level/stats, và **130 Sites of Grace unlock bằng tool**. Nên grace và qty **không dùng
   làm bằng chứng tiến độ**. Cờ boss và vũ khí thì tin được (tool không add được weapon).

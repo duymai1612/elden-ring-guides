@@ -477,10 +477,23 @@ def _first_free(data, arr_off, cap):
 
 
 def iter_items(data, inv):
-    for k, handle, qty, idx in _iter_records(data, inv["common_off"], INV_COMMON_CAP):
-        cat = (handle >> 28) & 0xF
-        item_id = handle & ITEM_ID_MASK
-        yield k, handle, qty, idx, cat, item_id
+    """Walk BOTH held-inventory arrays: common and key.
+
+    The key array is not an afterthought - it holds most quest rewards
+    (Black Knifeprint, Sellian Sealbreaker, the Mending Runes, every Great Rune
+    and Medallion). An earlier version of this walked only the common array,
+    which silently hid 116 items on a finished save and produced a questline
+    audit that called five completed quests unfinished.
+
+    Yields arr_off with every record because the two arrays live at different
+    offsets: a caller that writes back must use the offset the record came from,
+    never a hardcoded one, or it corrupts an unrelated slot in the other array."""
+    for arr_off, cap in ((inv["common_off"], INV_COMMON_CAP),
+                         (inv["key_off"], INV_KEY_CAP)):
+        for k, handle, qty, idx in _iter_records(data, arr_off, cap):
+            cat = (handle >> 28) & 0xF
+            item_id = handle & ITEM_ID_MASK
+            yield k, handle, qty, idx, cat, item_id, arr_off
 
 
 def describe_item(cat, item_id):
@@ -612,23 +625,37 @@ def cmd_list_items(args):
     buf = load_save(args.file)
     require_valid_slot(buf, args.slot)
     data, inv = resolve_inventory(buf, args.slot)
-    # Ashes of War carry no id in the record itself, so resolve them through the
-    # gaitem map to print a real name instead of "handle-referenced".
+    # Weapons, armor and Ashes of War carry no usable id in the inventory record
+    # itself, so resolve all three through the gaitem map. Printing
+    # "handle-referenced" instead is what forced every past audit to write its own
+    # dump script, and those scripts kept re-deriving this logic slightly wrong.
     pgd = find_pgd(data)
     gamap = gaitem_map(data, pgd) if pgd is not None else {}
-    print(f"held inventory (used common slots: {inv['common_count']})")
-    print(f"{'idx':>4}  {'qty':>4}  {'item_id':>8}  name")
-    shown = 0
-    for i, handle, qty, _, cat, item_id in iter_items(data, inv):
-        if args.goods_only and cat != GAITEM_GOODS:
-            continue
-        label = describe_item(cat, item_id)
+
+    def label_for(cat, item_id, handle):
         if cat == GAITEM_AOW and handle in gamap:
             gem = gamap[handle] & ~AOW_ITEM_ID_FLAG
-            label = KNOWN_AOW.get(gem, f"Ash of War #{gem}")
-        print(f"{i:>4}  {qty:>4}  {item_id:>8}  {label}")
-        shown += 1
-    print(f"({shown} items listed)")
+            return KNOWN_AOW.get(gem, f"Ash of War #{gem}")
+        if cat == GAITEM_WEAPON and handle in gamap:
+            iid = gamap[handle]
+            return f"{weapon_label(iid - (iid % 100))} +{iid % 100}"
+        if cat == GAITEM_ARMOR and handle in gamap:
+            return armor_label(gamap[handle] - ARMOR_ITEM_ID_OFF)
+        return describe_item(cat, item_id)
+
+    print(f"held inventory (common {inv['common_count']}, key {inv['key_count']})")
+    print(f"{'where':<6} {'idx':>4}  {'qty':>4}  {'item_id':>8}  name")
+    counts = {"common": 0, "key": 0}
+    for i, handle, qty, _, cat, item_id, arr_off in iter_items(data, inv):
+        if args.goods_only and cat != GAITEM_GOODS:
+            continue
+        where = "key" if arr_off == inv["key_off"] else "common"
+        if args.array and args.array != where:
+            continue
+        counts[where] += 1
+        print(f"{where:<6} {i:>4}  {qty:>4}  {item_id:>8}  {label_for(cat, item_id, handle)}")
+    print(f"({counts['common']} common + {counts['key']} key = "
+          f"{counts['common'] + counts['key']} items listed)")
 
 
 def cmd_set_rune(args):
@@ -734,20 +761,32 @@ def cmd_set_qty(args):
     data, inv = resolve_inventory(buf, args.slot)
 
     target_id = _match_item_id(args)
+    want_arr = {"common": inv["common_off"], "key": inv["key_off"]}.get(args.array)
     hits = []
-    for i, handle, qty, _, cat, item_id in iter_items(data, inv):
+    for i, handle, qty, _, cat, item_id, arr_off in iter_items(data, inv):
+        if want_arr is not None and arr_off != want_arr:
+            continue
         if args.index is not None and i == args.index:
-            hits.append((i, handle, qty, cat, item_id))
+            hits.append((i, handle, qty, cat, item_id, arr_off))
         elif target_id is not None and cat in (GAITEM_GOODS, GAITEM_ACCESSORY) and item_id == target_id:
-            hits.append((i, handle, qty, cat, item_id))
+            hits.append((i, handle, qty, cat, item_id, arr_off))
 
     if not hits:
         raise SystemExit("No matching item found. Use 'list-items' to see indexes/ids.")
-    if len(hits) > 1 and args.index is None:
+    if len(hits) > 1:
+        # Index numbering restarts per array, so one --index can legitimately hit
+        # two different items. Refuse rather than guess which one was meant.
+        if args.index is not None:
+            where = ", ".join("key" if o == inv["key_off"] else "common"
+                              for *_, o in hits)
+            raise SystemExit(f"--index {args.index} matches an item in both arrays "
+                             f"({where}); pass --array common|key to disambiguate.")
         raise SystemExit(f"{len(hits)} items match; pass --index to disambiguate.")
 
-    i, handle, old_qty, cat, item_id = hits[0]
-    rec_off = off + inv["common_off"] + i * ITEM_RECORD_LEN
+    i, handle, old_qty, cat, item_id, arr_off = hits[0]
+    # arr_off comes from the record itself: --index numbers restart at 0 in the
+    # key array, so a common-array offset would point at the wrong item entirely.
+    rec_off = off + arr_off + i * ITEM_RECORD_LEN
     put_u32(buf, rec_off + 4, args.qty)
     print(f"slot {args.slot}: {describe_item(cat, item_id)} (idx {i}) qty {old_qty} -> {args.qty}")
     commit(args.file, buf, [args.slot], args.yes, args.ignore_running_game)
@@ -1061,7 +1100,7 @@ def cmd_replace_weapon(args):
     entries = {h: (o, iid) for o, h, iid in iter_gaitem_entries(data, pgd) if h}
 
     hits = []
-    for k, handle, qty, _, cat, _ in iter_items(data, inv):
+    for k, handle, qty, _, cat, _, _ in iter_items(data, inv):
         if cat != GAITEM_WEAPON or handle not in entries:
             continue
         ent_off, real = entries[handle]
@@ -1125,9 +1164,11 @@ def build_parser():
     sp = sub.add_parser("list", help="list characters (name/level/runes)")
     sp.set_defaults(func=cmd_list)
 
-    sp = sub.add_parser("list-items", help="list held inventory items")
+    sp = sub.add_parser("list-items", help="list held inventory items (common + key)")
     sp.add_argument("--slot", type=int, default=0)
     sp.add_argument("--goods-only", action="store_true")
+    sp.add_argument("--array", choices=["common", "key"],
+                    help="restrict output to one inventory array (default: both)")
     sp.set_defaults(func=cmd_list_items)
 
     sp = sub.add_parser("set-rune", help="set spendable runes")
@@ -1151,6 +1192,9 @@ def build_parser():
     sp = sub.add_parser("set-qty", help="set quantity of an item you already own")
     sp.add_argument("--slot", type=int, default=0)
     sp.add_argument("--index", type=int, help="record index from list-items")
+    sp.add_argument("--array", choices=["common", "key"],
+                    help="which inventory array --index refers to (indexes restart "
+                         "at 0 per array; only needed when one index hits both)")
     sp.add_argument("--item-id", type=lambda x: int(x, 0), help="goods/talisman base param id")
     sp.add_argument("--name", help="known goods name (see list-items)")
     sp.add_argument("--qty", type=int, required=True)
