@@ -298,9 +298,22 @@ def cmd_report(args, slot, base, bst, graces):
 
 def cmd_unlock(args, buf, slot, base, bst, graces):
     slot_off = E.slot_data_off(args.slot)
+    if args.region:
+        known = {r for _, r, _ in graces}
+        unknown = set(args.region) - known
+        if unknown:
+            # A typo would otherwise light nothing and report success.
+            raise SystemExit(f"unknown region(s): {', '.join(sorted(unknown))}\n"
+                             f"known: {', '.join(sorted(known))}")
     changed = []
     for fid, region, name in graces:
-        if region in ENDGAME_REGIONS and not args.include_endgame:
+        if args.region:
+            # Naming a region explicitly is a deliberate choice, so it overrides the
+            # endgame guard: the guard exists to stop a blanket unlock from reaching
+            # a world state the story has not opened yet, not to block a targeted one.
+            if region not in args.region:
+                continue
+        elif region in ENDGAME_REGIONS and not args.include_endgame:
             continue
         addr = flag_addr(bst, fid)
         if not addr or read_flag(slot, base, addr):
@@ -317,7 +330,7 @@ def cmd_unlock(args, buf, slot, base, bst, graces):
         print(f"  {region:<30} {name}")
     if len(changed) > 15:
         print(f"  ... and {len(changed) - 15} more")
-    if not args.include_endgame:
+    if not args.region and not args.include_endgame:
         skipped = sum(1 for _, r, _ in graces if r in ENDGAME_REGIONS)
         print(f"skipped {skipped} graces in {', '.join(sorted(ENDGAME_REGIONS))} "
               "(pass --include-endgame to light those too)")
@@ -331,6 +344,9 @@ def main():
     p.add_argument("-y", "--yes", action="store_true")
     p.add_argument("--include-endgame", action="store_true",
                    help="also light Ashen Capital / Crumbling Farum Azula graces")
+    p.add_argument("--region", action="append", metavar="NAME",
+                   help="light only this region (repeatable). Names it explicitly, so "
+                        "it overrides --include-endgame gating. Run 'report' for names")
     p.add_argument("--base", type=lambda x: int(x, 0),
                    help="event-flag block offset, for a save already unlocked once "
                         "(auto-detection only works on an untouched save)")
